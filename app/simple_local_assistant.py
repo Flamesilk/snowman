@@ -51,8 +51,23 @@ USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
 ENABLE_INTERRUPTION = True
 USE_EDGE_TTS = True
-EDGE_TTS_VOICE = "en-US-ChristopherNeural"
-CHINESE_EDGE_TTS_VOICE = "zh-CN-YunxiaNeural"
+
+# TTS Voice settings
+EDGE_TTS_VOICES = {
+    "english": "en-US-ChristopherNeural",  # Male voice
+    "chinese": "zh-CN-XiaoxiaoNeural",        # Female voice
+    # Add more languages as needed:
+    # "japanese": "ja-JP-KeitaNeural",
+    # "korean": "ko-KR-InJoonNeural",
+    # "spanish": "es-ES-AlvaroNeural",
+    # "french": "fr-FR-HenriNeural",
+}
+
+# Default voices
+EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
+CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
+
+# Wake word settings
 DEFAULT_WAKE_KEYWORDS = ["computer", "alexa", "hey siri", "jarvis"]
 END_CONVERSATION_PHRASES = ["goodbye", "bye", "end conversation", "stop listening", "thank you", "thanks"]
 CHINESE_END_CONVERSATION_PHRASES = ["再见", "拜拜", "结束对话", "停止聆听", "谢谢"]
@@ -60,13 +75,23 @@ LANGUAGE = "english"
 
 # System prompt for Gemini to generate concise responses
 SYSTEM_PROMPT = """
-You are a friendly and witty voice assistant. Please provide concise, direct answers with a touch of humor.
-Keep your responses brief but entertaining.
-Feel free to add a playful tone or clever wordplay when appropriate.
-Use simple language and short sentences.
-Limit your response to 1-2 sentences when possible.
-Be charming but not over-the-top silly.
-Think of yourself as a helpful friend who likes to sprinkle in some humor.
+You are a friendly and witty voice assistant. Please provide concise, direct answers optimized for text-to-speech conversion:
+
+1. Keep responses brief but engaging
+2. Use simple language and short sentences
+3. Avoid special characters, emojis, or symbols
+4. Don't use markdown formatting, code blocks, or technical syntax
+5. Don't include URLs or links
+6. Avoid parentheses, brackets, or other text decorations
+7. Write numbers as words for better speech synthesis
+8. Use natural, conversational language
+9. Limit response to 1-2 sentences when possible
+10. Be charming but not over-the-top silly
+
+Important: You should detect the language of the user's input and respond in the same language.
+For Chinese input, respond in Simplified Chinese.
+For English input, respond in English.
+For other languages, try to respond in the same language if possible, otherwise use English.
 """
 
 class SimpleLocalAssistant:
@@ -80,12 +105,9 @@ class SimpleLocalAssistant:
         if DEBUG_AUDIO:
             print("🔍 Debug mode enabled - will print audio volume levels")
 
-        # Set language
+        # Set initial language (will be updated based on speech detection)
         self.language = language.lower()
-        if self.language not in ["english", "chinese"]:
-            print(f"⚠️ Unsupported language: {language}. Defaulting to English.")
-            self.language = "english"
-        print(f"🌐 Language set to: {self.language}")
+        print(f"🌐 Initial language set to: {self.language}")
 
         # Check required environment variables
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
@@ -315,21 +337,15 @@ class SimpleLocalAssistant:
 
     def init_chat_session(self):
         """Initialize a new chat session with the system prompt"""
-        system_prompt = SYSTEM_PROMPT
-
-        # Add language-specific instructions
-        if self.language == "chinese":
-            system_prompt += "\nPlease respond only in Simplified Chinese (except for the word that's hard to translate)."
-
         try:
-            # Create a new chat session
+            # Create a new chat session with the language-aware system prompt
             self.chat_session = self.model.start_chat(
                 history=[
-                    {"role": "user", "parts": [system_prompt]},
-                    {"role": "model", "parts": ["I'll keep my responses concise and to the point."]}
+                    {"role": "user", "parts": [SYSTEM_PROMPT]},
+                    {"role": "model", "parts": ["I'll keep my responses concise and adapt to the user's language."]}
                 ]
             )
-            print("🔄 Started new chat session")
+            print("🔄 Started new chat session with language adaptation")
         except Exception as e:
             print(f"❌ Error initializing chat session: {e}")
             sys.exit(1)
@@ -569,7 +585,7 @@ class SimpleLocalAssistant:
         return b''.join(frames)
 
     def transcribe_audio(self, audio_data):
-        """Convert audio to text using Whisper for both English and Chinese"""
+        """Convert audio to text using Whisper with automatic language detection"""
         temp_wav = None
         try:
             # Save audio to temporary file using a proper temporary file
@@ -585,19 +601,15 @@ class SimpleLocalAssistant:
                 print("❌ Whisper model not available")
                 return ""
 
-            # Set language for Whisper
-            lang = "zh" if self.language == "chinese" else "en"
-
             try:
-                # Transcribe with Whisper - with additional error handling
+                # Transcribe with Whisper - with automatic language detection
                 print("Starting Whisper transcription...")
                 print(f"Audio file size: {len(audio_data)} bytes")
-                print(f"Audio duration: {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds")  # 2 bytes per sample
+                print(f"Audio duration: {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds")
 
                 # Use faster-whisper API with conservative settings
                 segments, info = self.whisper_model.transcribe(
                     temp_wav,
-                    language=lang,
                     beam_size=1,
                     best_of=1,
                     temperature=0.0,
@@ -612,6 +624,19 @@ class SimpleLocalAssistant:
                         threshold=0.4
                     )
                 )
+
+                # Get the detected language
+                detected_lang = info.language
+                lang_probability = info.language_probability
+                print(f"🌐 Detected language: {detected_lang} (probability: {lang_probability:.2f})")
+
+                # Update the assistant's language setting based on detection
+                if lang_probability > 0.5:  # Only update if confidence is high enough
+                    if detected_lang == "zh":
+                        self.language = "chinese"
+                    elif detected_lang == "en":
+                        self.language = "english"
+                    # For other languages, keep current setting but adapt the response
 
                 # Get the transcription text
                 transcription = " ".join([segment.text for segment in segments]).strip()
@@ -658,6 +683,29 @@ class SimpleLocalAssistant:
             traceback.print_exc()
             return "I'm sorry, I encountered an error processing your request."
 
+    # def sanitize_text_for_speech(self, text):
+    #     """Clean up text before sending to TTS by removing emojis, brackets and special characters"""
+    #     import re
+
+    #     # Remove emojis and other special unicode characters
+    #     text = text.encode('ascii', 'ignore').decode('ascii')
+
+    #     # Remove text within brackets (including the brackets)
+    #     text = re.sub(r'\[.*?\]', '', text)
+    #     text = re.sub(r'\(.*?\)', '', text)
+
+    #     # Remove markdown code blocks and backticks
+    #     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    #     text = re.sub(r'`.*?`', '', text)
+
+    #     # Remove URLs
+    #     text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
+
+    #     # Remove multiple spaces and clean up whitespace
+    #     text = ' '.join(text.split())
+
+    #     return text.strip()
+
     def speak_text(self, text):
         """Convert text to speech and play it"""
         self.speak_text_edge(text)
@@ -665,8 +713,19 @@ class SimpleLocalAssistant:
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
         try:
-            print(f"🔊 Speaking with Edge TTS: '{text}'")
+            print(f"🔊 Speaking: '{text}'")
             self.is_speaking = True
+
+            # Select voice based on current language
+            if self.language == "chinese":
+                voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
+            else:
+                voice = os.getenv("EDGE_TTS_VOICE", EDGE_TTS_VOICE)
+
+            # Update the voice if it changed
+            if voice != self.edge_tts_voice:
+                self.edge_tts_voice = voice
+                print(f"Switched TTS voice to: {self.edge_tts_voice}")
 
             # Create a temporary file for the audio
             temp_file = "temp_tts.mp3"
