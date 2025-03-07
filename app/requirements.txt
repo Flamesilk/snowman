@@ -1,0 +1,11 @@
+numpy
+pyaudio
+torch
+google-generativeai
+edge-tts
+python-dotenv
+pvporcupine
+faster-whisper
+librosa
+soundfile
+pvrecorder
