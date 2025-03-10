@@ -56,6 +56,9 @@ USE_EDGE_TTS = True
 # Sound effect paths
 SOUND_EFFECTS = {
     "wake": "sounds/wake.mp3",  # Sound played when wake word is detected
+    "start_listening": "sounds/start_listening.mp3",  # Sound played when starting to listen
+    "start_transcribe": "sounds/start_transcribe.mp3",  # Sound played before starting transcription
+    "pre_response": "sounds/pre_response.mp3",  # Sound played before getting AI response
 }
 
 # Search-related constants
@@ -554,6 +557,9 @@ class SimpleLocalAssistant:
         print("🎤 Press Enter to start recording...")
         input()  # Wait for Enter key
 
+        # Play start listening sound
+        self.play_sound_effect("start_listening")
+
         print("🎤 Recording... (press Enter to stop)")
         self.is_listening = True
 
@@ -605,6 +611,10 @@ class SimpleLocalAssistant:
     def record_audio_auto(self):
         """Record audio from microphone until silence is detected (automatic)"""
         print("🎤 Listening... (automatic mode)")
+
+        # Play start listening sound
+        self.play_sound_effect("start_listening")
+
         self.is_listening = True
 
         # Open audio stream with settings matching Porcupine
@@ -1240,6 +1250,9 @@ class SimpleLocalAssistant:
                     print("⚠️ No audio data recorded")
                     continue
 
+                # Play sound before starting transcription
+                self.play_sound_effect("start_transcribe")
+
                 # Convert speech to text
                 whisper_start = time.time()
                 user_input = self.transcribe_audio(audio_data)
@@ -1295,15 +1308,19 @@ class SimpleLocalAssistant:
                         print(f"  Slowest: {search_slowest:.2f}s")
                         print(f"  Total searches: {len(self.search_times)}")
 
-                    # Print session statistics
-                    self.print_session_stats()
-
                     if self.language == "chinese":
                         self.speak_text("再见！")
                     else:
                         self.speak_text("Goodbye!")
                     in_conversation = False
+
+                    # Print session statistics
+                    self.print_session_stats()
+
                     return
+
+                # Play sound before getting AI response
+                self.play_sound_effect("pre_response")
 
                 # Get AI response
                 try:
