@@ -1,0 +1,20 @@
+# Core dependencies
+python-dotenv==1.0.0
+numpy==1.24.3
+google-generativeai==0.3.1
+
+# Speech recognition
+faster-whisper==1.1.1
+ctranslate2==4.3.1
+
+# Edge TTS
+edge-tts==6.1.9
+
+# Audio processing
+PyAudio==0.2.13
+soundfile==0.12.1
+librosa==0.10.1
+
+# Wake word detection
+pvporcupine==3.0.5  # Picovoice Porcupine for wake word detection
+pvrecorder==1.2.5  # For recording audio with Porcupine
