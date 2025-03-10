@@ -53,13 +53,19 @@ USE_MANUAL_RECORDING = False
 ENABLE_INTERRUPTION = True
 USE_EDGE_TTS = True
 
+# Sound effect paths
+SOUND_EFFECTS = {
+    "wake": "sounds/wake.mp3",  # Sound played when wake word is detected
+}
+
 # Search-related constants
 ENABLE_SEARCH = True
 
 # TTS Voice settings
 EDGE_TTS_VOICES = {
-    "english": "en-US-ChristopherNeural",  # Male voice
-    "chinese": "zh-CN-XiaoxiaoNeural",        # Female voice
+    "english": "en-US-JennyNeural",
+    "chinese": "zh-CN-XiaoxiaoNeural",
+    "others": "en-US-EmmaMultilingualNeural",
     # Add more languages as needed:
     # "japanese": "ja-JP-KeitaNeural",
     # "korean": "ko-KR-InJoonNeural",
@@ -448,6 +454,32 @@ class SimpleLocalAssistant:
             print("Search functionality may be limited")
             self.tavily_client = None  # Ensure client is None if initialization fails
 
+    def play_sound_effect(self, effect_name):
+        """Play a sound effect from the sounds directory"""
+        if effect_name not in SOUND_EFFECTS:
+            print(f"⚠️ Sound effect {effect_name} not found")
+            return
+
+        sound_path = os.path.join(os.path.dirname(__file__), SOUND_EFFECTS[effect_name])
+        if not os.path.exists(sound_path):
+            print(f"⚠️ Sound file not found: {sound_path}")
+            return
+
+        try:
+            if sys.platform == "darwin":  # macOS
+                subprocess.run(["afplay", sound_path], check=True)
+            elif sys.platform == "win32":  # Windows
+                subprocess.run(["start", sound_path], shell=True, check=True)
+            elif sys.platform.startswith("linux"):  # Linux
+                for player in ["mpg123", "mpg321", "mplayer", "play"]:
+                    try:
+                        subprocess.run([player, sound_path], check=True)
+                        break
+                    except (subprocess.SubprocessError, FileNotFoundError):
+                        continue
+        except Exception as e:
+            print(f"⚠️ Error playing sound effect: {e}")
+
     def listen_for_wake_word(self):
         """Listen for wake word using Porcupine with PvRecorder"""
         print(f"Listening for wake words: {', '.join(self.keywords)}...")
@@ -476,6 +508,9 @@ class SimpleLocalAssistant:
                         recorder.stop()
 
                         try:
+                            # Play wake sound effect
+                            self.play_sound_effect("wake")
+
                             # Create a new chat session for each wake word detection
                             self.init_chat_session()
 
