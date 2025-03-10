@@ -220,24 +220,39 @@ class SimpleLocalAssistant:
         """Initialize Whisper speech recognition model for both English and Chinese"""
         print("Loading Whisper ASR model...")
         try:
-            # Use base model for better balance of performance and accuracy
-            model_size = "base"
+            # Use small model for better accuracy while maintaining reasonable performance
+            model_size = "small"
             # Use CPU for better stability
             device = "cpu"
             compute_type = "int8"
 
             print(f"Using faster-whisper on {device} with compute type {compute_type}")
 
-            # Load the Whisper model with conservative settings
-            self.whisper_model = WhisperModel(
-                model_size,
-                device=device,
-                compute_type=compute_type,
-                cpu_threads=2,  # Reduce CPU threads for stability
-                num_workers=1,  # Single worker thread
-                download_root="models",  # Specify model storage directory
-                local_files_only=True  # Use cached model if available
-            )
+            try:
+                # First try to load from local cache only
+                print("Attempting to load model from local cache...")
+                self.whisper_model = WhisperModel(
+                    model_size,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=2,
+                    num_workers=1,
+                    download_root="models",
+                    local_files_only=True
+                )
+            except Exception as cache_error:
+                print(f"Model not found in cache, downloading {model_size} model (this may take a while)...")
+                # If local load fails, download the model
+                self.whisper_model = WhisperModel(
+                    model_size,
+                    device=device,
+                    compute_type=compute_type,
+                    cpu_threads=2,
+                    num_workers=1,
+                    download_root="models",
+                    local_files_only=False  # Allow downloading
+                )
+
             print(f"✅ Whisper {model_size} model loaded on {device}")
         except Exception as e:
             print(f"❌ Error loading Whisper model: {e}")
@@ -805,19 +820,12 @@ class SimpleLocalAssistant:
             is_chinese = any('\u4e00' <= char <= '\u9fff' for char in query)
 
             processing_prompt = {
-                "english": f"""Based on the search results below, provide a valid JSON object with your response.
-                Query: "{query}"
+                "english": f"""Based on the search results below, provide a natural, conversational response in English that directly answers the query: "{query}"
 
                 Search results:
                 {search_results}
 
-                RESPOND WITH ONLY A JSON OBJECT IN THIS EXACT FORMAT:
-                {{
-                    "response_text": "your response here",
-                    "language": "english"
-                }}
-
-                Guidelines for response_text:
+                Guidelines:
                 1. RESPOND IN ENGLISH ONLY
                 2. Be concise but informative
                 3. Use natural, conversational language
@@ -825,19 +833,12 @@ class SimpleLocalAssistant:
                 5. Acknowledge if the information is recent/current
                 6. Speak as if you're having a conversation""",
 
-                "chinese": f"""根据以下搜索结果，提供一个JSON格式的回答。
-                问题："{query}"
+                "chinese": f"""根据以下搜索结果，用中文提供一个自然、对话式的回答，直接回应这个问题："{query}"
 
                 搜索结果：
                 {search_results}
 
-                只返回以下格式的JSON对象：
-                {{
-                    "response_text": "你的回答",
-                    "language": "chinese"
-                }}
-
-                回答要求：
+                要求：
                 1. 必须只用中文回答
                 2. 简明但信息丰富
                 3. 使用自然的对话语言
@@ -849,33 +850,27 @@ class SimpleLocalAssistant:
             # Use Chinese prompt if query is in Chinese, otherwise use English
             prompt_language = "chinese" if is_chinese else "english"
 
+            # Get response using the same chat session
             response = self.chat_session.send_message(
                 processing_prompt[prompt_language],
                 stream=False
             )
 
-            # Clean up the response text to ensure valid JSON
-            response_text = response.text.strip()
-            # Remove any potential markdown code block markers
-            response_text = response_text.replace('```json', '').replace('```', '')
-            # Remove any leading/trailing whitespace or newlines
-            response_text = response_text.strip()
+            print(f"Processed search results response: {response.text}")
 
-            # Parse the JSON response
-            result = json.loads(response_text)
+            # Try to parse as JSON first in case we get a JSON response
+            try:
+                # Clean up the response text
+                cleaned_text = response.text.strip().replace('```json', '').replace('```', '')
+                result = json.loads(cleaned_text)
+                # If it's JSON and has response_text, use that
+                if isinstance(result, dict) and 'response_text' in result:
+                    return result['response_text']
+            except json.JSONDecodeError:
+                pass  # Not JSON, use the raw response
 
-            # Validate required fields
-            required_fields = ['response_text', 'language']
-            if not all(field in result for field in required_fields):
-                raise ValueError("Missing required fields in JSON response")
-
-            # Update the assistant's language based on the response
-            if result['language'] == 'chinese':
-                self.language = 'chinese'
-            elif result['language'] == 'english':
-                self.language = 'english'
-
-            return result['response_text']
+            # Return the cleaned response text directly
+            return response.text.strip().replace('```json', '').replace('```', '')
 
         except Exception as e:
             print(f"❌ Error processing search results: {e}")
