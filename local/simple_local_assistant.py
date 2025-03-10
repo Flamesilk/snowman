@@ -859,9 +859,9 @@ class SimpleLocalAssistant:
 
                 if not user_input:
                     if self.language == "chinese":
-                        self.speak_text("我没听清楚。请再说一遍。")
+                        self.speak_text("我没听清楚。")
                     else:
-                        self.speak_text("I didn't catch that. Could you please try again?")
+                        self.speak_text("I didn't catch that.")
                     continue
 
                 print(f"🎤 You said: '{user_input}'")
