@@ -832,6 +832,16 @@ class SimpleLocalAssistant:
         # Start a conversation loop
         in_conversation = True
 
+        # Initialize session statistics
+        self.session_start_time = time.time()
+        self.conversation_turns = 0
+        self.languages_detected = set()
+
+        # Initialize timing stats
+        self.whisper_times = []
+        self.gemini_times = []
+        self.edge_tts_times = []
+
         while in_conversation and not self.should_exit:
             try:
                 # Record user's speech
@@ -842,7 +852,11 @@ class SimpleLocalAssistant:
                     continue
 
                 # Convert speech to text
+                whisper_start = time.time()
                 user_input = self.transcribe_audio(audio_data)
+                whisper_time = time.time() - whisper_start
+                self.whisper_times.append(whisper_time)
+
                 if not user_input:
                     if self.language == "chinese":
                         self.speak_text("我没听清楚。请再说一遍。")
@@ -851,6 +865,7 @@ class SimpleLocalAssistant:
                     continue
 
                 print(f"🎤 You said: '{user_input}'")
+                self.conversation_turns += 1
 
                 # Check if the user wants to end the conversation
                 end_phrases = END_CONVERSATION_PHRASES
@@ -859,6 +874,24 @@ class SimpleLocalAssistant:
 
                 if any(phrase in user_input.lower() for phrase in end_phrases):
                     print("🔚 Ending conversation")
+
+                    # Calculate final statistics
+                    self.session_duration = time.time() - self.session_start_time
+                    self.whisper_avg_time = sum(self.whisper_times) / len(self.whisper_times) if self.whisper_times else 0
+                    self.whisper_fastest = min(self.whisper_times) if self.whisper_times else 0
+                    self.whisper_slowest = max(self.whisper_times) if self.whisper_times else 0
+
+                    self.gemini_avg_time = sum(self.gemini_times) / len(self.gemini_times) if self.gemini_times else 0
+                    self.gemini_fastest = min(self.gemini_times) if self.gemini_times else 0
+                    self.gemini_slowest = max(self.gemini_times) if self.gemini_times else 0
+
+                    self.edge_tts_avg_time = sum(self.edge_tts_times) / len(self.edge_tts_times) if self.edge_tts_times else 0
+                    self.edge_tts_fastest = min(self.edge_tts_times) if self.edge_tts_times else 0
+                    self.edge_tts_slowest = max(self.edge_tts_times) if self.edge_tts_times else 0
+
+                    # Print session statistics
+                    self.print_session_stats()
+
                     if self.language == "chinese":
                         self.speak_text("再见！")
                     else:
@@ -868,10 +901,18 @@ class SimpleLocalAssistant:
 
                 # Get AI response
                 try:
+                    gemini_start = time.time()
                     ai_response = self.get_ai_response(user_input)
+                    gemini_time = time.time() - gemini_start
+                    self.gemini_times.append(gemini_time)
+
                     if ai_response:
                         # Speak the response
+                        edge_tts_start = time.time()
                         self.speak_text(ai_response)
+                        edge_tts_time = time.time() - edge_tts_start
+                        self.edge_tts_times.append(edge_tts_time)
+
                         print("👂 Continuing conversation... (say 'goodbye' to end)")
                     else:
                         # Fallback response if AI fails
@@ -946,6 +987,31 @@ class SimpleLocalAssistant:
         if hasattr(self, 'audio'):
             self.audio.terminate()
         print("✅ Voice assistant resources cleaned up")
+
+    def print_session_stats(self):
+        """Print session statistics"""
+        print("\n📊 Session Statistics:")
+        print("==================================================")
+        print(f"Session duration: {self.session_duration:.2f} seconds")
+        print(f"Total conversation turns: {self.conversation_turns}")
+
+        print("\nSpeech-to-Text (Whisper):")
+        print(f"  Average time: {self.whisper_avg_time:.2f} seconds")
+        print(f"  Fastest: {self.whisper_fastest:.2f}s")
+        print(f"  Slowest: {self.whisper_slowest:.2f}s")
+
+        print("\nLLM Response (Gemini):")
+        print(f"  Average time: {self.gemini_avg_time:.2f} seconds")
+        print(f"  Fastest: {self.gemini_fastest:.2f}s")
+        print(f"  Slowest: {self.gemini_slowest:.2f}s")
+
+        print("\nText-to-Speech (Edge TTS):")
+        print(f"  Average time: {self.edge_tts_avg_time:.2f} seconds")
+        print(f"  Fastest: {self.edge_tts_fastest:.2f}s")
+        print(f"  Slowest: {self.edge_tts_slowest:.2f}s")
+
+        print("\nLanguages detected: " + ", ".join(self.languages_detected))
+        print("==================================================")
 
 def main():
     parser = argparse.ArgumentParser(description="Simple Local Voice Assistant")
