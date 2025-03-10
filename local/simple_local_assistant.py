@@ -74,7 +74,12 @@ CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
 # Wake word settings
 DEFAULT_WAKE_KEYWORDS = ["computer", "alexa", "hey siri", "jarvis"]
 END_CONVERSATION_PHRASES = ["goodbye", "bye", "end conversation", "stop listening", "thank you", "thanks"]
-CHINESE_END_CONVERSATION_PHRASES = ["再见", "拜拜", "结束对话", "停止聆听", "谢谢"]
+CHINESE_END_CONVERSATION_PHRASES = [
+    # Simplified Chinese
+    "再见", "拜拜", "结束对话", "谢谢", "谢谢你",
+    # Traditional Chinese
+    "再見", "拜拜", "結束對話", "謝謝", "謝謝你",
+]
 LANGUAGE = "english"
 
 # System prompt for Gemini to generate concise responses
@@ -1221,7 +1226,14 @@ class SimpleLocalAssistant:
                 if self.language == "chinese":
                     end_phrases = CHINESE_END_CONVERSATION_PHRASES + END_CONVERSATION_PHRASES
 
-                if any(phrase in user_input.lower() for phrase in end_phrases):
+                # For English phrases, use case-insensitive comparison
+                # For Chinese phrases, use exact match
+                should_end = any(
+                    (phrase in user_input.lower() if all(ord(c) < 128 for c in phrase) else phrase in user_input)
+                    for phrase in end_phrases
+                )
+
+                if should_end:
                     print("🔚 Ending conversation")
 
                     # Calculate final statistics
