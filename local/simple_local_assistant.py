@@ -32,6 +32,7 @@ import subprocess
 from dotenv import load_dotenv
 import pvporcupine
 from pvrecorder import PvRecorder
+from tavily import TavilyClient
 
 # Use faster-whisper for speech recognition
 from faster_whisper import WhisperModel
@@ -51,6 +52,9 @@ USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
 ENABLE_INTERRUPTION = True
 USE_EDGE_TTS = True
+
+# Search-related constants
+ENABLE_SEARCH = True
 
 # TTS Voice settings
 EDGE_TTS_VOICES = {
@@ -146,6 +150,13 @@ class SimpleLocalAssistant:
 
         # Initialize chat session
         self.init_chat_session()
+
+        # Initialize search APIs if enabled
+        if ENABLE_SEARCH:
+            self.init_search_apis()
+
+        # Initialize timing stats
+        self.search_times = []  # Add search timing stats
 
         # State variables
         self.is_listening = False
@@ -379,6 +390,43 @@ class SimpleLocalAssistant:
         except Exception as e:
             print(f"❌ Error initializing Gemini model: {e}")
             sys.exit(1)
+
+    def init_search_apis(self):
+        """Initialize search API configurations"""
+        try:
+            # Initialize Tavily client
+            self.tavily_api_key = os.getenv("TAVILY_API_KEY")
+            if self.tavily_api_key:
+                self.tavily_client = TavilyClient(api_key=self.tavily_api_key)
+
+                # Test the API with a simple query
+                try:
+                    test_params = {
+                        "query": "test",
+                        "search_depth": "basic",
+                        "max_results": 1
+                    }
+                    print("🔍 Testing Tavily API connection...")
+                    test_result = self.tavily_client.search(**test_params)
+                    if test_result:
+                        print("✅ Tavily Search API test successful")
+                    print("✅ Tavily Search API initialized")
+                except Exception as test_error:
+                    print(f"❌ Tavily API test failed: {test_error}")
+                    if hasattr(test_error, 'response'):
+                        try:
+                            error_details = test_error.response.json()
+                        except:
+                            error_details = test_error.response.text if hasattr(test_error.response, 'text') else str(test_error)
+                        print(f"Error details: {error_details}")
+                    raise Exception(f"Tavily API test failed: {test_error}")
+            else:
+                print("⚠️ TAVILY_API_KEY not found in .env file")
+                print("Search functionality will be limited")
+        except Exception as e:
+            print(f"⚠️ Error initializing search APIs: {e}")
+            print("Search functionality may be limited")
+            self.tavily_client = None  # Ensure client is None if initialization fails
 
     def listen_for_wake_word(self):
         """Listen for wake word using Porcupine with PvRecorder"""
@@ -662,49 +710,354 @@ class SimpleLocalAssistant:
                     print(f"Warning: Could not remove temporary file {temp_wav}: {e}")
                     pass
 
+    def perform_search(self, query, search_type="general"):
+        """
+        Perform a search using Tavily API
+        search_type can be: "general" or "news"
+        """
+        if not hasattr(self, 'tavily_client') or self.tavily_client is None:
+            raise Exception("Tavily client not initialized")
+
+        # Maximum number of retries
+        max_retries = 2
+        retry_count = 0
+        last_error = None
+
+        while retry_count <= max_retries:
+            try:
+                # Convert search type to Tavily parameters
+                search_params = {
+                    "query": query,
+                    "search_depth": "basic",
+                    "topic": search_type,  # Use topic parameter for news vs general searches
+                    "include_answer": True,
+                    "include_raw_content": False,
+                    "include_images": False,
+                    "max_results": 5,
+                    "language": 'zh' if self.language == 'chinese' else 'en'
+                }
+
+                # For news searches, we can also specify the time range
+                if search_type == "news":
+                    search_params["time_range"] = "day"  # Get very recent news
+
+                # Log search parameters for debugging
+                print(f"🔍 Tavily search parameters (attempt {retry_count + 1}/{max_retries + 1}): {json.dumps(search_params, ensure_ascii=False, indent=2)}")
+
+                # Perform the search
+                results = self.tavily_client.search(**search_params)
+                # print(f"🔍 Tavily raw response: {json.dumps(results, ensure_ascii=False, indent=2)}")
+
+                # Extract and format the results
+                if results.get("answer"):
+                    formatted_answer = results["answer"]
+                else:
+                    formatted_results = []
+                    for result in results.get("results", [])[:3]:
+                        title = result.get("title", "")
+                        snippet = result.get("snippet", "")
+                        # For news, include the published date if available
+                        if search_type == "news" and result.get("published_date"):
+                            formatted_results.append(f"{title} ({result['published_date']}): {snippet}")
+                        else:
+                            formatted_results.append(f"{title}: {snippet}")
+
+                    if self.language == "chinese":
+                        formatted_answer = f"以下是关于'{query}'的搜索结果：\n" + "\n".join(formatted_results)
+                    else:
+                        formatted_answer = f"Here are the search results for '{query}':\n" + "\n".join(formatted_results)
+
+                return formatted_answer[:500]  # Limit response length
+
+            except Exception as e:
+                last_error = e
+                error_details = str(e)
+
+                # Get detailed error information if available
+                if hasattr(e, 'response'):
+                    try:
+                        error_details = e.response.json()
+                    except:
+                        error_details = e.response.text if hasattr(e.response, 'text') else str(e)
+
+                print(f"❌ Tavily search error (attempt {retry_count + 1}/{max_retries + 1}): {error_details}")
+
+                # Check if we should retry
+                if retry_count < max_retries:
+                    retry_count += 1
+                    print(f"Retrying search (attempt {retry_count + 1}/{max_retries + 1})...")
+                    time.sleep(1)  # Wait a second before retrying
+                    continue
+                else:
+                    # If all retries failed, raise the last error
+                    raise Exception(f"Search failed after {max_retries + 1} attempts: {error_details}")
+
+        # If we get here, all retries failed
+        if self.language == "chinese":
+            return f"抱歉，搜索时出现错误。错误信息：{str(last_error)}"
+        else:
+            return f"Sorry, there was an error performing the search. Error: {str(last_error)}"
+
+    def process_search_results(self, query, search_results):
+        """Have LLM process search results into a natural, conversational response"""
+        try:
+            # Detect if query is Chinese
+            is_chinese = any('\u4e00' <= char <= '\u9fff' for char in query)
+
+            processing_prompt = {
+                "english": f"""Based on the search results below, provide a valid JSON object with your response.
+                Query: "{query}"
+
+                Search results:
+                {search_results}
+
+                RESPOND WITH ONLY A JSON OBJECT IN THIS EXACT FORMAT:
+                {{
+                    "response_text": "your response here",
+                    "language": "english"
+                }}
+
+                Guidelines for response_text:
+                1. RESPOND IN ENGLISH ONLY
+                2. Be concise but informative
+                3. Use natural, conversational language
+                4. Focus on the most relevant information
+                5. Acknowledge if the information is recent/current
+                6. Speak as if you're having a conversation""",
+
+                "chinese": f"""根据以下搜索结果，提供一个JSON格式的回答。
+                问题："{query}"
+
+                搜索结果：
+                {search_results}
+
+                只返回以下格式的JSON对象：
+                {{
+                    "response_text": "你的回答",
+                    "language": "chinese"
+                }}
+
+                回答要求：
+                1. 必须只用中文回答
+                2. 简明但信息丰富
+                3. 使用自然的对话语言
+                4. 专注于最相关的信息
+                5. 如果信息是最新的，请说明
+                6. 像进行对话一样说话"""
+            }
+
+            # Use Chinese prompt if query is in Chinese, otherwise use English
+            prompt_language = "chinese" if is_chinese else "english"
+
+            response = self.chat_session.send_message(
+                processing_prompt[prompt_language],
+                stream=False
+            )
+
+            # Clean up the response text to ensure valid JSON
+            response_text = response.text.strip()
+            # Remove any potential markdown code block markers
+            response_text = response_text.replace('```json', '').replace('```', '')
+            # Remove any leading/trailing whitespace or newlines
+            response_text = response_text.strip()
+
+            # Parse the JSON response
+            result = json.loads(response_text)
+
+            # Validate required fields
+            required_fields = ['response_text', 'language']
+            if not all(field in result for field in required_fields):
+                raise ValueError("Missing required fields in JSON response")
+
+            # Update the assistant's language based on the response
+            if result['language'] == 'chinese':
+                self.language = 'chinese'
+            elif result['language'] == 'english':
+                self.language = 'english'
+
+            return result['response_text']
+
+        except Exception as e:
+            print(f"❌ Error processing search results: {e}")
+            print(f"Raw response: {response.text if 'response' in locals() else 'No response'}")
+            if self.language == "chinese":
+                return "抱歉，处理搜索结果时出现错误。"
+            else:
+                return "Sorry, there was an error processing the search results."
+
     def get_ai_response(self, user_input):
         """Get response from Gemini AI using chat history"""
         try:
             print(f"🧠 Processing: '{user_input}'")
 
-            # Set a timeout for the API call
-            start_time = time.time()
+            # Combined decision and response prompt
+            decision_prompt = {
+                "english": f"""You must respond with a valid JSON object and nothing else.
+                Analyze this query: "{user_input}"
 
-            # Send the message to the ongoing chat session
-            response = self.chat_session.send_message(user_input)
+                RESPOND WITH ONLY A JSON OBJECT IN THIS EXACT FORMAT:
+                {{
+                    "need_search": true/false,
+                    "response_text": "your response here",
+                    "reason": "your reason here"
+                }}
 
-            elapsed_time = time.time() - start_time
-            print(f"Gemini response received in {elapsed_time:.2f} seconds")
+                Rules:
+                1. Set need_search=true if the query needs:
+                   - Current events or news
+                   - Real-time information
+                   - Up-to-date facts
+                   - Recent developments
 
-            return response.text
+                2. Set need_search=false for:
+                   - General conversation
+                   - Personal opinions
+                   - Static knowledge
+                   - Commands or instructions
+
+                3. For response_text:
+                   - If need_search=true: Write a brief acknowledgment
+                   - If need_search=false: Write the complete answer
+
+                4. Keep reason brief and clear
+
+                IMPORTANT:
+                - Use proper JSON formatting with double quotes
+                - Do not include any text outside the JSON object
+                - Do not include any markdown or formatting
+                - Do not include line breaks in strings""",
+
+                "chinese": f"""你必须只返回一个有效的JSON对象，不要包含任何其他内容。
+                分析这个问题："{user_input}"
+
+                只返回以下格式的JSON对象：
+                {{
+                    "need_search": true/false,
+                    "response_text": "你的回应",
+                    "reason": "原因说明"
+                }}
+
+                规则：
+                1. 以下情况设置need_search=true：
+                   - 当前事件或新闻
+                   - 需要实时信息
+                   - 最新事实
+                   - 近期发展
+
+                2. 以下情况设置need_search=false：
+                   - 一般对话
+                   - 个人意见
+                   - 固定知识
+                   - 指令或命令
+
+                3. response_text内容：
+                   - 如果need_search=true：写一个简短的确认信息
+                   - 如果need_search=false：写出完整答案
+
+                4. reason保持简短明确
+
+                重要提示：
+                - 使用正确的JSON格式和双引号
+                - 不要在JSON对象外包含任何文本
+                - 不要包含任何markdown或格式化
+                - 字符串中不要包含换行符"""
+            }
+
+            # Get structured response from LLM
+            response = self.chat_session.send_message(
+                decision_prompt[self.language],
+                stream=False
+            )
+
+            try:
+                # Clean up the response text to ensure valid JSON
+                response_text = response.text.strip()
+                # Remove any potential markdown code block markers
+                response_text = response_text.replace('```json', '').replace('```', '')
+                # Remove any leading/trailing whitespace or newlines
+                response_text = response_text.strip()
+
+                # Parse the JSON response
+                result = json.loads(response_text)
+
+                # Validate required fields
+                required_fields = ['need_search', 'response_text', 'reason']
+                if not all(field in result for field in required_fields):
+                    raise ValueError("Missing required fields in JSON response")
+
+                print(f"🤔 Decision: need_search={result['need_search']}, reason={result['reason']}")
+
+                # If search is needed, start it immediately
+                search_results = None
+                if ENABLE_SEARCH and result['need_search']:
+                    print("🔍 Starting web search...")
+
+                    # Start search in a separate thread
+                    search_thread = threading.Thread(target=lambda: self._perform_search(user_input))
+                    search_thread.start()
+
+                    # Speak acknowledgment while search is running
+                    self.speak_text(result['response_text'])
+
+                    # Wait for search to complete
+                    search_thread.join()
+
+                    # Get search results from the thread
+                    search_results = getattr(search_thread, 'search_results', None)
+                    search_error = getattr(search_thread, 'search_error', None)
+
+                    if search_error:
+                        raise search_error
+
+                    if search_results:
+                        # Process search results
+                        return self.process_search_results(user_input, search_results)
+                    else:
+                        # Fallback if search failed
+                        if self.language == "chinese":
+                            return "抱歉，搜索结果获取失败。"
+                        else:
+                            return "Sorry, I couldn't retrieve the search results."
+                else:
+                    # Return the direct response
+                    return result['response_text']
+
+            except (json.JSONDecodeError, ValueError) as e:
+                print(f"⚠️ Error parsing LLM response: {e}")
+                print(f"Raw response: {response.text}")
+
+                # Fallback: Try to extract a usable response
+                if self.language == "chinese":
+                    return "抱歉，我遇到了一个处理错误。让我重新组织语言。"
+                else:
+                    return "I apologize, I encountered a processing error. Let me rephrase that."
+
         except Exception as e:
             print(f"❌ Error getting AI response: {e}")
             import traceback
             traceback.print_exc()
             return "I'm sorry, I encountered an error processing your request."
 
-    # def sanitize_text_for_speech(self, text):
-    #     """Clean up text before sending to TTS by removing emojis, brackets and special characters"""
-    #     import re
+    def _perform_search(self, query):
+        """Helper method to perform search in a separate thread"""
+        try:
+            # Determine if it's a news query
+            search_type = "news" if any(word in query.lower() for word in ["news", "新闻", "最新", "最近"]) else "general"
+            if search_type == "news":
+                print("📰 Using news search")
 
-    #     # Remove emojis and other special unicode characters
-    #     text = text.encode('ascii', 'ignore').decode('ascii')
+            # Perform the search with timing
+            search_start = time.time()
+            search_results = self.perform_search(query, search_type)
+            search_time = time.time() - search_start
+            self.search_times.append(search_time)
+            print(f"🔍 Search completed in {search_time:.2f} seconds")
 
-    #     # Remove text within brackets (including the brackets)
-    #     text = re.sub(r'\[.*?\]', '', text)
-    #     text = re.sub(r'\(.*?\)', '', text)
-
-    #     # Remove markdown code blocks and backticks
-    #     text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
-    #     text = re.sub(r'`.*?`', '', text)
-
-    #     # Remove URLs
-    #     text = re.sub(r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+', '', text)
-
-    #     # Remove multiple spaces and clean up whitespace
-    #     text = ' '.join(text.split())
-
-    #     return text.strip()
+            # Store results in the thread object
+            threading.current_thread().search_results = search_results
+        except Exception as e:
+            # Store error in the thread object
+            threading.current_thread().search_error = e
 
     def speak_text(self, text):
         """Convert text to speech and play it"""
@@ -841,6 +1194,7 @@ class SimpleLocalAssistant:
         self.whisper_times = []
         self.gemini_times = []
         self.edge_tts_times = []
+        self.search_times = []  # Reset search times for new session
 
         while in_conversation and not self.should_exit:
             try:
@@ -888,6 +1242,16 @@ class SimpleLocalAssistant:
                     self.edge_tts_avg_time = sum(self.edge_tts_times) / len(self.edge_tts_times) if self.edge_tts_times else 0
                     self.edge_tts_fastest = min(self.edge_tts_times) if self.edge_tts_times else 0
                     self.edge_tts_slowest = max(self.edge_tts_times) if self.edge_tts_times else 0
+
+                    if self.search_times:  # Add search statistics
+                        search_avg = sum(self.search_times) / len(self.search_times)
+                        search_fastest = min(self.search_times)
+                        search_slowest = max(self.search_times)
+                        print("\nWeb Search (Tavily):")
+                        print(f"  Average time: {search_avg:.2f} seconds")
+                        print(f"  Fastest: {search_fastest:.2f}s")
+                        print(f"  Slowest: {search_slowest:.2f}s")
+                        print(f"  Total searches: {len(self.search_times)}")
 
                     # Print session statistics
                     self.print_session_stats()
@@ -1004,6 +1368,16 @@ class SimpleLocalAssistant:
         print(f"  Average time: {self.gemini_avg_time:.2f} seconds")
         print(f"  Fastest: {self.gemini_fastest:.2f}s")
         print(f"  Slowest: {self.gemini_slowest:.2f}s")
+
+        if self.search_times:  # Add search statistics
+            search_avg = sum(self.search_times) / len(self.search_times)
+            search_fastest = min(self.search_times)
+            search_slowest = max(self.search_times)
+            print("\nWeb Search (Tavily):")
+            print(f"  Average time: {search_avg:.2f} seconds")
+            print(f"  Fastest: {search_fastest:.2f}s")
+            print(f"  Slowest: {search_slowest:.2f}s")
+            print(f"  Total searches: {len(self.search_times)}")
 
         print("\nText-to-Speech (Edge TTS):")
         print(f"  Average time: {self.edge_tts_avg_time:.2f} seconds")
