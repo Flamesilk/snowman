@@ -42,7 +42,7 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 FORMAT = pyaudio.paInt16
 CHUNK_SIZE = 512
-SILENCE_THRESHOLD = 0.01
+SILENCE_THRESHOLD = 0.02
 SILENCE_DURATION = 1.5
 INTERRUPTION_THRESHOLD = 0.03
 INTERRUPTION_MIN_CHUNKS = 3
@@ -55,8 +55,8 @@ USE_EDGE_TTS = True
 
 # Sound effect paths
 SOUND_EFFECTS = {
-    "wake": "sounds/wake.mp3",  # Sound played when wake word is detected
-    "start_listening": "sounds/start_listening.mp3",  # Sound played when starting to listen
+    "wake": "sounds/wake.m4a",  # Sound played when wake word is detected
+    "start_listening": "sounds/start_listening.m4a",  # Sound played when starting to listen
     "start_transcribe": "sounds/start_transcribe.mp3",  # Sound played before starting transcription
     "pre_response": "sounds/pre_response.mp3",  # Sound played before getting AI response
 }
