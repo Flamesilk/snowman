@@ -783,6 +783,11 @@ class SimpleLocalAssistant:
         if not hasattr(self, 'tavily_client') or self.tavily_client is None:
             raise Exception("Tavily client not initialized")
 
+        if self.language == 'chinese':
+            query += " (提供简明扼要的回答，适合口语交流)"
+        else:
+            query += " (provide a concise answer, suitable for casual conversation)"
+
         # Maximum number of retries
         max_retries = 2
         retry_count = 0
@@ -915,18 +920,9 @@ class SimpleLocalAssistant:
                     "reason": "原因说明"
                 }}
 
-                规则：
-                1. 以下情况设置need_search=true：
-                   - 当前事件或新闻
-                   - 需要实时信息
-                   - 最新事实
-                   - 近期发展
-
-                2. 以下情况设置need_search=false：
-                   - 一般对话
-                   - 个人意见
-                   - 固定知识
-                   - 指令或命令
+                2. 根据是否需要搜索，设置 need_search
+                    - 如果需要搜索，设置 need_search=true
+                    - 如果不需要搜索，设置 need_search=false
 
                 3. response_text内容：
                    - 如果need_search=true：写一个简短的确认信息
