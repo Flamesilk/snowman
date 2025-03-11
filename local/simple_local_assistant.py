@@ -42,13 +42,14 @@ CHANNELS = 1
 CHUNK_SIZE = 512
 SILENCE_THRESHOLD = 0.025
 SILENCE_DURATION = 1.5
-INTERRUPTION_THRESHOLD = 0.03
+INITIAL_SILENCE_DURATION = 0.4  # Shorter silence duration for initial question after wake word
+INTERRUPTION_THRESHOLD = 0.1
 INTERRUPTION_MIN_CHUNKS = 3
 DEBUG_AUDIO = True
 MAX_RECORDING_TIME = 20
 USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
-ENABLE_INTERRUPTION = True
+ENABLE_INTERRUPTION = False
 USE_EDGE_TTS = True
 CONVERSATION_TIMEOUT = 30  # Timeout in seconds for no user input
 
@@ -496,33 +497,129 @@ class SimpleLocalAssistant:
             print(f"⚠️ Error playing sound effect: {e}")
 
     def listen_for_wake_word(self):
-        """Listen for wake word using Porcupine"""
+        """Listen for wake word using Porcupine and capture any following speech"""
         print("👂 Listening for wake word...")
 
         recorder = None
         try:
+            # Initialize recorder with frame length 512 (works for both wake word and speech)
             recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
             recorder.start()
 
             print(f"Using audio device: {recorder.selected_device}")
+            print(f"Wake word frame length: {self.porcupine.frame_length}")
+            print(f"Audio chunk size: {CHUNK_SIZE}")
+            print(f"Silence threshold: {SILENCE_THRESHOLD}")
+
+            # Buffer to store audio frames after wake word
+            post_wake_frames = []
+            is_collecting = False
+            silent_chunks = 0
+            required_silent_chunks = int(INITIAL_SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
+            speech_detected = False
+            collection_start_time = None
+
+            # Create a small circular buffer to keep the last few frames before wake word
+            pre_wake_buffer = []
+            PRE_WAKE_BUFFER_SIZE = 20  # Increased buffer size to capture more context
 
             while not self.should_exit:
                 try:
                     pcm = recorder.read()
-                    keyword_index = self.porcupine.process(pcm)
 
-                    if keyword_index >= 0:
-                        print("🎯 Wake word detected!")
-                        self.play_sound_effect("wake")
-                        recorder.stop()
-                        self.handle_conversation()
-                        # After conversation, restart recording
-                        if not self.should_exit:
-                            recorder.start()
+                    if not is_collecting:
+                        # Keep the last few frames in a circular buffer
+                        pre_wake_buffer.append(np.array(pcm, dtype=np.int16).tobytes())
+                        if len(pre_wake_buffer) > PRE_WAKE_BUFFER_SIZE:
+                            pre_wake_buffer.pop(0)
+
+                        # Process for wake word detection
+                        keyword_index = self.porcupine.process(pcm)
+                        if keyword_index >= 0:
+                            print("🎯 Wake word detected!")
+
+                            is_collecting = True
+                            post_wake_frames = []
+
+                            # Keep a few frames from before the wake word to catch early speech
+                            post_wake_frames.extend(pre_wake_buffer[-10:])  # Keep last 5 frames
+                            pre_wake_buffer = []
+
+                            # Start collecting immediately without delay
+                            silent_chunks = 0
+                            speech_detected = False
+                            collection_start_time = time.time()
+                            print("🎤 Started collecting speech after wake word...")
+                            continue
+                    else:
+                        # Collecting speech after wake word
+                        # Add the frame to our buffer
+                        post_wake_frames.append(np.array(pcm, dtype=np.int16).tobytes())
+
+                        # Calculate volume
+                        audio_data = np.array(pcm, dtype=np.int16)
+                        volume_norm = np.abs(audio_data).mean() / 32768.0
+
+                        # Print volume for debugging
+                        if DEBUG_AUDIO:
+                            print(f"Post-wake volume: {volume_norm:.4f} (threshold: {SILENCE_THRESHOLD * 0.6})")
+
+                        # Use an even lower threshold for initial speech detection
+                        current_threshold = SILENCE_THRESHOLD * 0.6  # Lower threshold to 60% of silence threshold
+                        if volume_norm > current_threshold:
+                            if not speech_detected:
+                                print(f"Speech detected after wake word! (volume: {volume_norm:.4f})")
+                            speech_detected = True
+                            silent_chunks = 0
+                        else:
+                            silent_chunks += 1
+                            if DEBUG_AUDIO and silent_chunks > 0:
+                                print(f"Silent chunk {silent_chunks}/{required_silent_chunks} (volume: {volume_norm:.4f})")
+
+                        # Calculate elapsed time
+                        elapsed_time = time.time() - collection_start_time if collection_start_time else 0
+
+                        # Calculate required silent chunks based on whether speech was detected
+                        # Use shorter silence duration for initial question
+                        required_silent_chunks = int(INITIAL_SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
+
+                        # Stop collecting if:
+                        # 1. We've detected speech and then silence (normal end)
+                        # 2. We've hit the maximum recording time
+                        # 3. We've collected too much audio without any speech
+                        if ((speech_detected and silent_chunks >= required_silent_chunks) or
+                            elapsed_time >= MAX_RECORDING_TIME or
+                            (not speech_detected and elapsed_time >= 1.0)):  # Increased timeout to 3 seconds
+
+                            print(f"Stopping collection after {elapsed_time:.1f} seconds")
+                            print(f"Speech detected: {speech_detected}")
+                            print(f"Silent chunks: {silent_chunks}")
+                            print(f"Frames collected: {len(post_wake_frames)}")
+
+                            # If we detected speech, process it
+                            if len(post_wake_frames) > 0:
+                                if not speech_detected:
+                                    # Only play wake sound if no speech was detected
+                                    self.play_sound_effect("wake")
+                                print("Processing collected audio...")
+                                audio_data = b''.join(post_wake_frames)
+                                self.handle_conversation(initial_audio=audio_data)
+                            else:
+                                print("No audio frames collected, starting normal conversation...")
+                                # Play wake sound when starting normal conversation
+                                self.play_sound_effect("wake")
+                                self.handle_conversation()
+
+                            # Reset and continue listening for wake word
+                            is_collecting = False
+                            post_wake_frames = []
+                            pre_wake_buffer = []  # Clear the pre-wake buffer
                             print("👂 Listening for wake word...")
 
                 except Exception as e:
                     print(f"Error processing audio: {e}")
+                    import traceback
+                    traceback.print_exc()
                     break
 
         except Exception as e:
@@ -896,7 +993,7 @@ class SimpleLocalAssistant:
 
                 Rules:
 
-                1. Set need_search based on if a further search is needed.
+                1. Please make a careful decision about if search is needed based on the conversation history, and set need_search accordingly.
                    - Set need_search=true if the query needs a search.
                    - Set need_search=false if the query is a general question that can be answered with the current knowledge.
 
@@ -907,7 +1004,7 @@ class SimpleLocalAssistant:
                 3. Keep reason brief and clear
 
                 4. For search_query:
-                   - If need_search=true: Write the search query for Tavily
+                   - If need_search=true: Write the search query for Tavily, considering the conversation history, not just the current query.
                    - If need_search=false: Do not include search_query
 
                 IMPORTANT:
@@ -929,7 +1026,7 @@ class SimpleLocalAssistant:
 
                 规则:
 
-                1. 根据是否需要搜索，设置 need_search
+                1. 结合对话历史，决定当前是否需要搜索，来设置 need_search
                     - 如果需要搜索，设置 need_search=true
                     - 如果不需要搜索，设置 need_search=false
 
@@ -940,7 +1037,7 @@ class SimpleLocalAssistant:
                 3. reason保持简短明确
 
                 4. search_query内容：
-                    - 如果need_search=true：写出搜索查询的问题，供Tavily搜索使用
+                    - 如果need_search=true：写出搜索查询的问题，供Tavily搜索使用，考虑对话历史，不仅仅是当前查询。
                     - 如果need_search=false：不要包含search_query
 
                 重要提示：
@@ -1153,7 +1250,7 @@ class SimpleLocalAssistant:
         self.edge_tts_fastest = min(self.edge_tts_times) if self.edge_tts_times else 0
         self.edge_tts_slowest = max(self.edge_tts_times) if self.edge_tts_times else 0
 
-    def handle_conversation(self):
+    def handle_conversation(self, initial_audio=None):
         """Handle a complete conversation turn"""
         # Start a conversation loop
         in_conversation = True
@@ -1172,6 +1269,37 @@ class SimpleLocalAssistant:
         # Initialize last activity timestamp
         last_activity_time = time.time()
 
+        # Process initial audio if provided
+        if initial_audio:
+            try:
+                # Convert speech to text
+                whisper_start = time.time()
+                user_input = self.transcribe_audio(initial_audio)
+                whisper_time = time.time() - whisper_start
+                self.whisper_times.append(whisper_time)
+
+                if user_input:
+                    print(f"🎤 You said: '{user_input}'")
+                    self.conversation_turns += 1
+                    last_activity_time = time.time()
+
+                    # Process the input and get AI response
+                    gemini_start = time.time()
+                    ai_response = self.get_ai_response(user_input)
+                    gemini_time = time.time() - gemini_start
+                    self.gemini_times.append(gemini_time)
+
+                    if ai_response:
+                        # Speak the response
+                        edge_tts_start = time.time()
+                        self.speak_text(ai_response)
+                        edge_tts_time = time.time() - edge_tts_start
+                        self.edge_tts_times.append(edge_tts_time)
+                        last_activity_time = time.time()
+            except Exception as e:
+                print(f"Error processing initial audio: {e}")
+
+        # Continue with normal conversation loop
         while in_conversation and not self.should_exit:
             try:
                 # Check for timeout
