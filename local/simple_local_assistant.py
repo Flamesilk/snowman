@@ -52,6 +52,7 @@ USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
 ENABLE_INTERRUPTION = True
 USE_EDGE_TTS = True
+CONVERSATION_TIMEOUT = 30  # Timeout in seconds for no user input
 
 # Sound effect paths
 SOUND_EFFECTS = {
@@ -816,7 +817,7 @@ class SimpleLocalAssistant:
 
                 # Perform the search
                 results = self.tavily_client.search(**search_params)
-                print(f"🔍 Tavily raw response: {json.dumps(results, ensure_ascii=False, indent=2)}")
+                # print(f"🔍 Tavily raw response: {json.dumps(results, ensure_ascii=False, indent=2)}")
 
                 # Extract and format the results
                 if results.get("answer"):
@@ -1178,14 +1179,33 @@ class SimpleLocalAssistant:
         self.edge_tts_times = []
         self.search_times = []  # Reset search times for new session
 
+        # Initialize last activity timestamp
+        last_activity_time = time.time()
+
         while in_conversation and not self.should_exit:
             try:
+                # Check for timeout
+                if time.time() - last_activity_time > CONVERSATION_TIMEOUT:
+                    print(f"\n⏰ No activity detected for {CONVERSATION_TIMEOUT} seconds")
+                    if self.language == "chinese":
+                        self.speak_text("再见！")
+                    else:
+                        self.speak_text("Goodbye!")
+
+                    # Calculate and print session statistics
+                    self.session_duration = time.time() - self.session_start_time
+                    self.print_session_stats()
+                    return
+
                 # Record user's speech
                 audio_data = self.record_audio()
 
                 if not audio_data or len(audio_data) == 0:
                     print("⚠️ No audio data recorded")
                     continue
+
+                # Update last activity timestamp when we get valid audio input
+                last_activity_time = time.time()
 
                 # Play sound before starting transcription
                 self.play_sound_effect("start_transcribe")
@@ -1273,6 +1293,9 @@ class SimpleLocalAssistant:
                         edge_tts_time = time.time() - edge_tts_start
                         self.edge_tts_times.append(edge_tts_time)
 
+                        # Update last activity time after AI response
+                        last_activity_time = time.time()
+
                         print("👂 Continuing conversation... (say 'goodbye' to end)")
                     else:
                         # Fallback response if AI fails
@@ -1280,6 +1303,8 @@ class SimpleLocalAssistant:
                             self.speak_text("抱歉，我无法生成回应。请再试一次。")
                         else:
                             self.speak_text("Sorry, I couldn't generate a response. Please try again.")
+                        # Update last activity time even for fallback response
+                        last_activity_time = time.time()
                 except Exception as e:
                     print(f"❌ Error getting or speaking AI response: {e}")
                     import traceback
@@ -1289,6 +1314,8 @@ class SimpleLocalAssistant:
                         self.speak_text("抱歉，出现了一个错误。请再试一次。")
                     else:
                         self.speak_text("Sorry, there was an error. Please try again.")
+                    # Update last activity time even for error response
+                    last_activity_time = time.time()
             except Exception as e:
                 print(f"❌ Error in conversation handling: {e}")
                 import traceback
@@ -1299,6 +1326,8 @@ class SimpleLocalAssistant:
                         self.speak_text("抱歉，出现了一个错误。我将继续聆听。")
                     else:
                         self.speak_text("Sorry, there was an error. I'll continue listening.")
+                    # Update last activity time for recovery response
+                    last_activity_time = time.time()
                 except:
                     print("❌ Could not recover from error")
                     in_conversation = False
@@ -1411,12 +1440,19 @@ def main():
         default="english",
         help="Set the language (english or chinese)"
     )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Conversation timeout in seconds (default: 30)"
+    )
     args = parser.parse_args()
 
     # Set global options
-    global USE_MANUAL_RECORDING, ENABLE_INTERRUPTION
+    global USE_MANUAL_RECORDING, ENABLE_INTERRUPTION, CONVERSATION_TIMEOUT
     USE_MANUAL_RECORDING = args.manual
     ENABLE_INTERRUPTION = not args.disable_interruption
+    CONVERSATION_TIMEOUT = args.timeout
 
     assistant = SimpleLocalAssistant(
         use_wake_word=not args.no_wake_word,
