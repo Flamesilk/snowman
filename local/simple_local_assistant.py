@@ -3,7 +3,7 @@
 Simple Local Voice Assistant
 
 A lightweight voice assistant implementation that uses:
-- PyAudio for direct microphone access
+- PvRecorder for audio recording
 - Porcupine for wake word detection
 - Whisper for speech recognition (local, no API key needed)
 - Google's Gemini for AI responses
@@ -22,7 +22,6 @@ import argparse
 import wave
 import json
 import numpy as np
-import pyaudio
 import google.generativeai as genai
 import asyncio
 import edge_tts
@@ -40,7 +39,6 @@ from faster_whisper import WhisperModel
 # Constants
 SAMPLE_RATE = 16000
 CHANNELS = 1
-FORMAT = pyaudio.paInt16
 CHUNK_SIZE = 512
 SILENCE_THRESHOLD = 0.025
 SILENCE_DURATION = 1.5
@@ -131,6 +129,7 @@ For other languages, try to respond in the same language if possible, otherwise 
 
 class SimpleLocalAssistant:
     def __init__(self, use_wake_word=True, debug=False, language="english"):
+        """Initialize the voice assistant"""
         # Load environment variables
         load_dotenv()
 
@@ -152,17 +151,16 @@ class SimpleLocalAssistant:
 
         print(f"Using Google API key: {self.google_api_key[:5]}...{self.google_api_key[-5:]}")
 
-        # Initialize PyAudio
-        self.audio = pyaudio.PyAudio()
-
         # Set thresholds
         if USE_FIXED_THRESHOLDS:
             self.silence_threshold = SILENCE_THRESHOLD
             self.interruption_threshold = INTERRUPTION_THRESHOLD
             print(f"Using fixed thresholds - Silence: {self.silence_threshold}, Interruption: {self.interruption_threshold}")
         else:
-            # Calibrate microphone
+            # Calibrate microphone to set thresholds
+            print("Calibrating microphone for dynamic thresholds...")
             self.silence_threshold, self.interruption_threshold = self.calibrate_microphone()
+            print(f"Using calibrated thresholds - Silence: {self.silence_threshold}, Interruption: {self.interruption_threshold}")
 
         # Initialize speech recognition
         self.init_speech_recognition()
@@ -198,35 +196,32 @@ class SimpleLocalAssistant:
         print("✅ Voice assistant initialized and ready")
 
     def calibrate_microphone(self):
-        """Measure ambient noise and calibrate thresholds"""
+        """Measure ambient noise and calibrate thresholds using PvRecorder"""
         print("🎙️ Calibrating microphone (please be quiet)...")
 
-        # Open audio stream
-        stream = self.audio.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK_SIZE
-        )
+        recorder = None
+        try:
+            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
+            recorder.start()
 
-        # Collect ambient noise samples
-        ambient_levels = []
-        calibration_time = 2  # seconds
-        samples_to_collect = int(calibration_time * SAMPLE_RATE / CHUNK_SIZE)
+            # Collect ambient noise samples
+            ambient_levels = []
+            calibration_time = 2  # seconds
+            samples_to_collect = int(calibration_time * SAMPLE_RATE / CHUNK_SIZE)
 
-        for _ in range(samples_to_collect):
-            try:
-                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                audio_data = np.frombuffer(data, dtype=np.int16)
-                volume_norm = np.abs(audio_data).mean() / 32768.0
-                ambient_levels.append(volume_norm)
-            except Exception as e:
-                print(f"Error during calibration: {e}")
+            for _ in range(samples_to_collect):
+                try:
+                    pcm = recorder.read()
+                    audio_data = np.array(pcm, dtype=np.int16)
+                    volume_norm = np.abs(audio_data).mean() / 32768.0
+                    ambient_levels.append(volume_norm)
+                except Exception as e:
+                    print(f"Error during calibration: {e}")
 
-        # Close the stream
-        stream.stop_stream()
-        stream.close()
+        finally:
+            if recorder is not None:
+                recorder.stop()
+                recorder.delete()
 
         # Calculate thresholds based on ambient noise
         if ambient_levels:
@@ -501,16 +496,12 @@ class SimpleLocalAssistant:
             print(f"⚠️ Error playing sound effect: {e}")
 
     def listen_for_wake_word(self):
-        """Listen for wake word using Porcupine with PvRecorder"""
-        print(f"Listening for wake words: {', '.join(self.keywords)}...")
+        """Listen for wake word using Porcupine"""
+        print("👂 Listening for wake word...")
 
         recorder = None
         try:
-            # Initialize PvRecorder
-            recorder = PvRecorder(
-                device_index=-1,  # default audio device
-                frame_length=self.porcupine.frame_length
-            )
+            recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
             recorder.start()
 
             print(f"Using audio device: {recorder.selected_device}")
@@ -521,46 +512,28 @@ class SimpleLocalAssistant:
                     keyword_index = self.porcupine.process(pcm)
 
                     if keyword_index >= 0:
-                        detected_keyword = self.keywords[keyword_index]
-                        print(f"🎤 Wake word detected: '{detected_keyword}'")
-
-                        # Stop recording before handling conversation
+                        print("🎯 Wake word detected!")
+                        self.play_sound_effect("wake")
                         recorder.stop()
-
-                        try:
-                            # Play wake sound effect
-                            self.play_sound_effect("wake")
-
-                            # Create a new chat session for each wake word detection
-                            self.init_chat_session()
-
-                            # Handle the conversation
-                            self.handle_conversation()
-                        except Exception as e:
-                            print(f"❌ Error handling conversation after wake word: {e}")
-                            import traceback
-                            traceback.print_exc()
-
-                        # Resume recording after conversation
-                        if not recorder.is_recording:
+                        self.handle_conversation()
+                        # After conversation, restart recording
+                        if not self.should_exit:
                             recorder.start()
+                            print("👂 Listening for wake word...")
 
-                        print(f"Listening for wake words: {', '.join(self.keywords)}...")
                 except Exception as e:
-                    print(f"❌ Error processing audio for wake word: {e}")
-                    # Brief pause to avoid tight error loop
-                    time.sleep(0.1)
+                    print(f"Error processing audio: {e}")
+                    break
+
         except Exception as e:
-            print(f"❌ Error in wake word listener: {e}")
+            print(f"Error in wake word detection: {e}")
             import traceback
             traceback.print_exc()
+
         finally:
             if recorder is not None:
-                try:
-                    recorder.stop()
-                    recorder.delete()
-                except:
-                    pass
+                recorder.stop()
+                recorder.delete()
 
     def record_audio(self):
         """Record audio from microphone until silence is detected"""
@@ -580,16 +553,8 @@ class SimpleLocalAssistant:
         print("🎤 Recording... (press Enter to stop)")
         self.is_listening = True
 
-        # Open audio stream
-        stream = self.audio.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK_SIZE
-        )
-
         frames = []
+        recorder = None
 
         # Create a thread to wait for Enter key
         stop_recording = threading.Event()
@@ -605,18 +570,27 @@ class SimpleLocalAssistant:
         # Record until Enter is pressed or timeout
         start_time = time.time()
         try:
-            while not stop_recording.is_set() and time.time() - start_time < MAX_RECORDING_TIME:
-                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                frames.append(data)
+            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
+            recorder.start()
 
-                # Print volume for debugging
-                if DEBUG_AUDIO and len(frames) % 20 == 0:  # Only print every 20 frames
-                    audio_data = np.frombuffer(data, dtype=np.int16)
-                    volume_norm = np.abs(audio_data).mean() / 32768.0
-                    print(f"Recording volume: {volume_norm:.4f}")
+            while not stop_recording.is_set() and time.time() - start_time < MAX_RECORDING_TIME:
+                try:
+                    pcm = recorder.read()
+                    frames.append(np.array(pcm, dtype=np.int16).tobytes())
+
+                    # Print volume for debugging
+                    if DEBUG_AUDIO and len(frames) % 20 == 0:  # Only print every 20 frames
+                        audio_data = np.array(pcm, dtype=np.int16)
+                        volume_norm = np.abs(audio_data).mean() / 32768.0
+                        print(f"Recording volume: {volume_norm:.4f}")
+                except Exception as e:
+                    print(f"Error reading audio: {e}")
+                    break
+
         finally:
-            stream.stop_stream()
-            stream.close()
+            if recorder is not None:
+                recorder.stop()
+                recorder.delete()
             self.is_listening = False
 
             # Print recording stats
@@ -632,17 +606,12 @@ class SimpleLocalAssistant:
         # Play start listening sound
         self.play_sound_effect("start_listening")
 
+        # Optionally recalibrate if not using fixed thresholds
+        if not USE_FIXED_THRESHOLDS:
+            print("Recalibrating thresholds before recording...")
+            self.silence_threshold, self.interruption_threshold = self.calibrate_microphone()
+
         self.is_listening = True
-
-        # Open audio stream with settings matching Porcupine
-        stream = self.audio.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            input=True,
-            frames_per_buffer=CHUNK_SIZE
-        )
-
         frames = []
         silent_chunks = 0
         required_silent_chunks = int(SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
@@ -650,16 +619,24 @@ class SimpleLocalAssistant:
         # Variables to track speech activity
         speech_detected = False
         max_volume = 0.0
+        interruption_chunks = 0
 
-        # Add timeout mechanism
-        start_time = time.time()
-        max_chunks = int(MAX_RECORDING_TIME * SAMPLE_RATE / CHUNK_SIZE)
-        chunk_count = 0
-
-        # Wait a moment before starting to record
-        time.sleep(0.1)
-
+        # Initialize PvRecorder
+        recorder = None
         try:
+            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
+            recorder.start()
+
+            print(f"Using audio device: {recorder.selected_device}")
+
+            # Add timeout mechanism
+            start_time = time.time()
+            max_chunks = int(MAX_RECORDING_TIME * SAMPLE_RATE / CHUNK_SIZE)
+            chunk_count = 0
+
+            # Wait a moment before starting to record
+            time.sleep(0.1)
+
             while not self.should_exit and self.is_listening:
                 try:
                     # Check for timeout
@@ -667,12 +644,13 @@ class SimpleLocalAssistant:
                         print(f"⚠️ Recording timeout after {MAX_RECORDING_TIME} seconds")
                         break
 
-                    data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                    frames.append(data)
+                    # Get audio frame from PvRecorder
+                    pcm = recorder.read()
+                    frames.append(np.array(pcm, dtype=np.int16).tobytes())
                     chunk_count += 1
 
-                    # Check audio volume
-                    audio_data = np.frombuffer(data, dtype=np.int16)
+                    # Calculate volume using numpy
+                    audio_data = np.array(pcm, dtype=np.int16)
                     volume_norm = np.abs(audio_data).mean() / 32768.0
                     max_volume = max(max_volume, volume_norm)
 
@@ -685,8 +663,19 @@ class SimpleLocalAssistant:
                     if volume_norm > SILENCE_THRESHOLD:
                         speech_detected = True
                         silent_chunks = 0
+
+                        # Check for interruption if enabled and speech was detected
+                        if ENABLE_INTERRUPTION and speech_detected:
+                            if volume_norm > INTERRUPTION_THRESHOLD:
+                                interruption_chunks += 1
+                                if interruption_chunks >= INTERRUPTION_MIN_CHUNKS:
+                                    print(f"🔊 Interruption detected (volume: {volume_norm:.4f})")
+                                    break
+                            else:
+                                interruption_chunks = 0
                     else:
                         silent_chunks += 1
+                        interruption_chunks = 0  # Reset interruption counter during silence
                         # Only end recording if we've detected some speech first
                         if speech_detected and silent_chunks >= required_silent_chunks:
                             if DEBUG_AUDIO:
@@ -697,9 +686,12 @@ class SimpleLocalAssistant:
                 except Exception as e:
                     print(f"Error reading audio: {e}")
                     break
+
         finally:
-            stream.stop_stream()
-            stream.close()
+            # Clean up PvRecorder
+            if recorder is not None:
+                recorder.stop()
+                recorder.delete()
             self.is_listening = False
 
             # Print recording stats
@@ -722,7 +714,7 @@ class SimpleLocalAssistant:
             temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
             with wave.open(temp_wav, 'wb') as wf:
                 wf.setnchannels(CHANNELS)
-                wf.setsampwidth(self.audio.get_sample_size(FORMAT))
+                wf.setsampwidth(2)  # 16-bit audio = 2 bytes
                 wf.setframerate(SAMPLE_RATE)
                 wf.writeframes(audio_data)
 
@@ -1117,52 +1109,7 @@ class SimpleLocalAssistant:
             except Exception as e:
                 print(f"System audio player error: {e}")
 
-            # Method 2: Fallback to PyAudio if system player failed
-            if not played_successfully:
-                try:
-                    print("Falling back to PyAudio for playback...")
-                    # Use a different audio library to read the MP3 file
-                    import soundfile as sf
-                    import librosa
-
-                    # Convert MP3 to WAV for easier handling
-                    y, sr = librosa.load(temp_file, sr=None)
-                    temp_wav = "temp_tts.wav"
-                    sf.write(temp_wav, y, sr)
-
-                    # Play using PyAudio
-                    with wave.open(temp_wav, 'rb') as wf:
-                        # Open stream
-                        stream = self.audio.open(
-                            format=self.audio.get_format_from_width(wf.getsampwidth()),
-                            channels=wf.getnchannels(),
-                            rate=wf.getframerate(),
-                            output=True
-                        )
-
-                        # Read data
-                        data = wf.readframes(1024)
-
-                        # Play
-                        while data:
-                            stream.write(data)
-                            data = wf.readframes(1024)
-
-                        # Close
-                        stream.stop_stream()
-                        stream.close()
-
-                    # Clean up temporary WAV file
-                    try:
-                        os.remove(temp_wav)
-                    except:
-                        pass
-
-                    played_successfully = True
-                except Exception as e:
-                    print(f"PyAudio fallback error: {e}")
-
-            # Method 3: Last resort - print the text if audio failed
+            # Method 2: Last resort - print the text if audio failed
             if not played_successfully:
                 print(f"⚠️ Audio playback failed. Text response: {text}")
 
