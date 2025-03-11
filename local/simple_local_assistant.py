@@ -42,7 +42,7 @@ SAMPLE_RATE = 16000
 CHANNELS = 1
 FORMAT = pyaudio.paInt16
 CHUNK_SIZE = 512
-SILENCE_THRESHOLD = 0.02
+SILENCE_THRESHOLD = 0.025
 SILENCE_DURATION = 1.5
 INTERRUPTION_THRESHOLD = 0.03
 INTERRUPTION_MIN_CHUNKS = 3
@@ -795,10 +795,10 @@ class SimpleLocalAssistant:
                     "query": query,
                     "search_depth": "basic",
                     "topic": search_type,  # Use topic parameter for news vs general searches
-                    "include_answer": True,
+                    "include_answer": "basic",
                     "include_raw_content": False,
                     "include_images": False,
-                    "max_results": 5,
+                    "max_results": 3,
                     "language": 'zh' if self.language == 'chinese' else 'en'
                 }
 
@@ -815,7 +815,7 @@ class SimpleLocalAssistant:
 
                 # Extract and format the results
                 if results.get("answer"):
-                    formatted_answer = results["answer"]
+                    return results["answer"]
                 else:
                     formatted_results = []
                     for result in results.get("results", [])[:3]:
@@ -832,7 +832,7 @@ class SimpleLocalAssistant:
                     else:
                         formatted_answer = f"Here are the search results for '{query}':\n" + "\n".join(formatted_results)
 
-                return formatted_answer[:500]  # Limit response length
+                    return formatted_answer[:500]  # Limit response length
 
             except Exception as e:
                 last_error = e
@@ -862,73 +862,6 @@ class SimpleLocalAssistant:
             return f"抱歉，搜索时出现错误。错误信息：{str(last_error)}"
         else:
             return f"Sorry, there was an error performing the search. Error: {str(last_error)}"
-
-    def process_search_results(self, query, search_results):
-        """Have LLM process search results into a natural, conversational response"""
-        try:
-            # Detect if query is Chinese
-            is_chinese = any('\u4e00' <= char <= '\u9fff' for char in query)
-
-            processing_prompt = {
-                "english": f"""Based on the search results below, provide a natural, conversational response in English that directly answers the query: "{query}"
-
-                Search results:
-                {search_results}
-
-                Guidelines:
-                1. RESPOND IN ENGLISH ONLY
-                2. Be concise but informative
-                3. Use natural, conversational language
-                4. Focus on the most relevant information
-                5. Acknowledge if the information is recent/current
-                6. Speak as if you're having a conversation""",
-
-                "chinese": f"""根据以下搜索结果，用中文提供一个自然、对话式的回答，直接回应这个问题："{query}"
-
-                搜索结果：
-                {search_results}
-
-                要求：
-                1. 必须只用中文回答
-                2. 简明但信息丰富
-                3. 使用自然的对话语言
-                4. 专注于最相关的信息
-                5. 如果信息是最新的，请说明
-                6. 像进行对话一样说话"""
-            }
-
-            # Use Chinese prompt if query is in Chinese, otherwise use English
-            prompt_language = "chinese" if is_chinese else "english"
-
-            # Get response using the same chat session
-            response = self.chat_session.send_message(
-                processing_prompt[prompt_language],
-                stream=False
-            )
-
-            print(f"Processed search results response: {response.text}")
-
-            # Try to parse as JSON first in case we get a JSON response
-            try:
-                # Clean up the response text
-                cleaned_text = response.text.strip().replace('```json', '').replace('```', '')
-                result = json.loads(cleaned_text)
-                # If it's JSON and has response_text, use that
-                if isinstance(result, dict) and 'response_text' in result:
-                    return result['response_text']
-            except json.JSONDecodeError:
-                pass  # Not JSON, use the raw response
-
-            # Return the cleaned response text directly
-            return response.text.strip().replace('```json', '').replace('```', '')
-
-        except Exception as e:
-            print(f"❌ Error processing search results: {e}")
-            print(f"Raw response: {response.text if 'response' in locals() else 'No response'}")
-            if self.language == "chinese":
-                return "抱歉，处理搜索结果时出现错误。"
-            else:
-                return "Sorry, there was an error processing the search results."
 
     def get_ai_response(self, user_input):
         """Get response from Gemini AI using chat history"""
@@ -1054,9 +987,11 @@ class SimpleLocalAssistant:
                     if search_error:
                         raise search_error
 
+                    print(f"🔍 Search results: {search_results}")
+
                     if search_results:
-                        # Process search results
-                        return self.process_search_results(user_input, search_results)
+                        # Return search results directly without processing
+                        return search_results
                     else:
                         # Fallback if search failed
                         if self.language == "chinese":
@@ -1087,9 +1022,10 @@ class SimpleLocalAssistant:
         """Helper method to perform search in a separate thread"""
         try:
             # Determine if it's a news query
-            search_type = "news" if any(word in query.lower() for word in ["news", "新闻", "最新", "最近"]) else "general"
-            if search_type == "news":
-                print("📰 Using news search")
+            search_type = "general"
+            # search_type = "news" if any(word in query.lower() for word in ["news", "新闻", "最新", "最近"]) else "general"
+            # if search_type == "news":
+            #     print("📰 Using news search")
 
             # Perform the search with timing
             search_start = time.time()
