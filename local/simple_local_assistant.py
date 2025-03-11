@@ -816,7 +816,7 @@ class SimpleLocalAssistant:
 
                 # Perform the search
                 results = self.tavily_client.search(**search_params)
-                # print(f"🔍 Tavily raw response: {json.dumps(results, ensure_ascii=False, indent=2)}")
+                print(f"🔍 Tavily raw response: {json.dumps(results, ensure_ascii=False, indent=2)}")
 
                 # Extract and format the results
                 if results.get("answer"):
@@ -886,23 +886,20 @@ class SimpleLocalAssistant:
                 }}
 
                 Rules:
-                1. Set need_search=true if the query needs:
-                   - Current events or news
-                   - Real-time information
-                   - Up-to-date facts
-                   - Recent developments
 
-                2. Set need_search=false for:
-                   - General conversation
-                   - Personal opinions
-                   - Static knowledge
-                   - Commands or instructions
+                1. Set need_search based on if a further search is needed.
+                   - Set need_search=true if the query needs a search.
+                   - Set need_search=false if the query is a general question that can be answered with the current knowledge.
 
-                3. For response_text:
+                2. For response_text:
                    - If need_search=true: Write a brief acknowledgment
                    - If need_search=false: Write the complete answer
 
-                4. Keep reason brief and clear
+                3. Keep reason brief and clear
+
+                4. For search_query:
+                   - If need_search=true: Write the search query for Tavily
+                   - If need_search=false: Do not include search_query
 
                 IMPORTANT:
                 - Use proper JSON formatting with double quotes
@@ -917,18 +914,25 @@ class SimpleLocalAssistant:
                 {{
                     "need_search": true/false,
                     "response_text": "你的回应",
-                    "reason": "原因说明"
+                    "reason": "原因说明",
+                    "search_query": "搜索查询"
                 }}
 
-                2. 根据是否需要搜索，设置 need_search
+                规则:
+
+                1. 根据是否需要搜索，设置 need_search
                     - 如果需要搜索，设置 need_search=true
                     - 如果不需要搜索，设置 need_search=false
 
-                3. response_text内容：
+                2. response_text内容：
                    - 如果need_search=true：写一个简短的确认信息
                    - 如果need_search=false：写出完整答案
 
-                4. reason保持简短明确
+                3. reason保持简短明确
+
+                4. search_query内容：
+                    - 如果need_search=true：写出搜索查询的问题，供Tavily搜索使用
+                    - 如果need_search=false：不要包含search_query
 
                 重要提示：
                 - 使用正确的JSON格式和双引号
@@ -967,7 +971,8 @@ class SimpleLocalAssistant:
                     print("🔍 Starting web search...")
 
                     # Start search in a separate thread
-                    search_thread = threading.Thread(target=lambda: self._perform_search(user_input))
+                    search_query = result.get('search_query', user_input)
+                    search_thread = threading.Thread(target=lambda: self._perform_search(search_query))
                     search_thread.start()
 
                     # Speak acknowledgment while search is running
