@@ -56,10 +56,26 @@ CONVERSATION_TIMEOUT = 30  # Timeout in seconds for no user input
 
 # Sound effect paths
 SOUND_EFFECTS = {
-    "wake": "sounds/wake.m4a",  # Sound played when wake word is detected
+    "wake": "sounds/wake.mp3",  # Sound played when wake word is detected
     "start_listening": "sounds/start_listening.m4a",  # Sound played when starting to listen
     "start_transcribe": "sounds/start_transcribe.mp3",  # Sound played before starting transcription
     "pre_response": "sounds/pre_response.mp3",  # Sound played before getting AI response
+    "goodbye_en": "sounds/goodbye_en.m4a",  # English goodbye message
+    "goodbye_zh": "sounds/goodbye_zh.m4a",  # Chinese goodbye message
+    "not_understood_en": "sounds/not_understood_en.m4a",  # English not understood message
+    "not_understood_zh": "sounds/not_understood_zh.m4a",  # Chinese not understood message
+}
+
+# Pre-recorded messages mapping
+PRE_RECORDED_MESSAGES = {
+    "goodbye": {
+        "english": "goodbye_en",
+        "chinese": "goodbye_zh"
+    },
+    "not_understood": {
+        "english": "not_understood_en",
+        "chinese": "not_understood_zh"
+    }
 }
 
 # Search-related constants
@@ -1163,6 +1179,33 @@ class SimpleLocalAssistant:
             traceback.print_exc()
             self.is_speaking = False
 
+    def play_pre_recorded_message(self, message_type):
+        """Play a pre-recorded message based on type and current language"""
+        if message_type in PRE_RECORDED_MESSAGES:
+            sound_effect = PRE_RECORDED_MESSAGES[message_type][self.language]
+            self.play_sound_effect(sound_effect)
+        else:
+            print(f"⚠️ No pre-recorded message found for: {message_type}")
+
+    def calculate_session_stats(self):
+        """Calculate session statistics"""
+        self.session_duration = time.time() - self.session_start_time
+
+        # Calculate Whisper stats
+        self.whisper_avg_time = sum(self.whisper_times) / len(self.whisper_times) if self.whisper_times else 0
+        self.whisper_fastest = min(self.whisper_times) if self.whisper_times else 0
+        self.whisper_slowest = max(self.whisper_times) if self.whisper_times else 0
+
+        # Calculate Gemini stats
+        self.gemini_avg_time = sum(self.gemini_times) / len(self.gemini_times) if self.gemini_times else 0
+        self.gemini_fastest = min(self.gemini_times) if self.gemini_times else 0
+        self.gemini_slowest = max(self.gemini_times) if self.gemini_times else 0
+
+        # Calculate Edge TTS stats
+        self.edge_tts_avg_time = sum(self.edge_tts_times) / len(self.edge_tts_times) if self.edge_tts_times else 0
+        self.edge_tts_fastest = min(self.edge_tts_times) if self.edge_tts_times else 0
+        self.edge_tts_slowest = max(self.edge_tts_times) if self.edge_tts_times else 0
+
     def handle_conversation(self):
         """Handle a complete conversation turn"""
         # Start a conversation loop
@@ -1187,13 +1230,10 @@ class SimpleLocalAssistant:
                 # Check for timeout
                 if time.time() - last_activity_time > CONVERSATION_TIMEOUT:
                     print(f"\n⏰ No activity detected for {CONVERSATION_TIMEOUT} seconds")
-                    if self.language == "chinese":
-                        self.speak_text("再见！")
-                    else:
-                        self.speak_text("Goodbye!")
+                    self.play_pre_recorded_message("goodbye")
 
                     # Calculate and print session statistics
-                    self.session_duration = time.time() - self.session_start_time
+                    self.calculate_session_stats()
                     self.print_session_stats()
                     return
 
@@ -1217,10 +1257,7 @@ class SimpleLocalAssistant:
                 self.whisper_times.append(whisper_time)
 
                 if not user_input:
-                    if self.language == "chinese":
-                        self.speak_text("我没听清楚。")
-                    else:
-                        self.speak_text("I didn't catch that.")
+                    self.play_pre_recorded_message("not_understood")
                     continue
 
                 print(f"🎤 You said: '{user_input}'")
@@ -1240,40 +1277,11 @@ class SimpleLocalAssistant:
 
                 if should_end:
                     print("🔚 Ending conversation")
+                    self.play_pre_recorded_message("goodbye")
 
-                    # Calculate final statistics
-                    self.session_duration = time.time() - self.session_start_time
-                    self.whisper_avg_time = sum(self.whisper_times) / len(self.whisper_times) if self.whisper_times else 0
-                    self.whisper_fastest = min(self.whisper_times) if self.whisper_times else 0
-                    self.whisper_slowest = max(self.whisper_times) if self.whisper_times else 0
-
-                    self.gemini_avg_time = sum(self.gemini_times) / len(self.gemini_times) if self.gemini_times else 0
-                    self.gemini_fastest = min(self.gemini_times) if self.gemini_times else 0
-                    self.gemini_slowest = max(self.gemini_times) if self.gemini_times else 0
-
-                    self.edge_tts_avg_time = sum(self.edge_tts_times) / len(self.edge_tts_times) if self.edge_tts_times else 0
-                    self.edge_tts_fastest = min(self.edge_tts_times) if self.edge_tts_times else 0
-                    self.edge_tts_slowest = max(self.edge_tts_times) if self.edge_tts_times else 0
-
-                    if self.search_times:  # Add search statistics
-                        search_avg = sum(self.search_times) / len(self.search_times)
-                        search_fastest = min(self.search_times)
-                        search_slowest = max(self.search_times)
-                        print("\nWeb Search (Tavily):")
-                        print(f"  Average time: {search_avg:.2f} seconds")
-                        print(f"  Fastest: {search_fastest:.2f}s")
-                        print(f"  Slowest: {search_slowest:.2f}s")
-                        print(f"  Total searches: {len(self.search_times)}")
-
-                    if self.language == "chinese":
-                        self.speak_text("再见！")
-                    else:
-                        self.speak_text("Goodbye!")
-                    in_conversation = False
-
-                    # Print session statistics
+                    # Calculate and print session statistics
+                    self.calculate_session_stats()
                     self.print_session_stats()
-
                     return
 
                 # Play sound before getting AI response
@@ -1409,7 +1417,8 @@ class SimpleLocalAssistant:
         print(f"  Fastest: {self.edge_tts_fastest:.2f}s")
         print(f"  Slowest: {self.edge_tts_slowest:.2f}s")
 
-        print("\nLanguages detected: " + ", ".join(self.languages_detected))
+        if hasattr(self, 'languages_detected') and self.languages_detected:
+            print("\nLanguages detected: " + ", ".join(self.languages_detected))
         print("==================================================")
 
 def main():
