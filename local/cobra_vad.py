@@ -20,8 +20,11 @@ import struct
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 512  # Default frame length for PvRecorder
 DEFAULT_THRESHOLD = 0.5  # Default voice probability threshold
-SILENCE_DURATION = 1.5  # Seconds of silence to consider speech ended
+SILENCE_DURATION = 2.0  # Seconds of silence to consider speech ended
 BUFFER_PADDING = 0.5  # Seconds of audio to keep before speech starts
+
+# New duration threshold
+MIN_VOICE_DURATION = 0.3  # Minimum duration (in seconds) of voice activity to be considered speech
 
 
 class CobraVAD:
@@ -67,6 +70,12 @@ class CobraVAD:
         self.voice_timeout = SILENCE_DURATION
         self.pre_buffer_size = int(BUFFER_PADDING * SAMPLE_RATE / FRAME_LENGTH)
 
+        # Voice duration tracking
+        self.voice_start_time = None
+        self.current_voice_duration = 0
+        self.min_voice_frames = int(MIN_VOICE_DURATION * SAMPLE_RATE / FRAME_LENGTH)
+        self.voice_frames_count = 0
+
         # For continuous monitoring
         self.monitor_thread = None
         self.stop_event = Event()
@@ -77,6 +86,8 @@ class CobraVAD:
             print(f"Cobra VAD initialized with threshold: {self.threshold}")
             print(f"Frame length: {FRAME_LENGTH}")
             print(f"Pre-buffer size: {self.pre_buffer_size} frames ({BUFFER_PADDING} seconds)")
+            print(f"Minimum voice duration: {MIN_VOICE_DURATION} seconds ({self.min_voice_frames} frames)")
+            print(f"Silence duration for end: {SILENCE_DURATION} seconds")
 
     def pause_monitoring(self):
         """Temporarily pause voice monitoring"""
@@ -152,6 +163,7 @@ class CobraVAD:
             self.audio_buffer = []
             self.is_voice_active = False
             self.last_voice_end_time = None
+            self.voice_frames_count = 0
 
             # Main monitoring loop
             while not self.stop_event.is_set():
@@ -171,7 +183,7 @@ class CobraVAD:
                     bar_length = int(voice_probability * 30)
                     bar = '█' * bar_length + '░' * (30 - bar_length)
                     status = "VOICE" if is_voice else "NOISE"
-                    print(f"\rProb: {voice_probability:.4f} [{bar}] {status}", end='', flush=True)
+                    print(f"\rProb: {voice_probability:.4f} [{bar}] {status} | Voice frames: {self.voice_frames_count}/{self.min_voice_frames}", end='', flush=True)
 
                 # Handle pre-voice buffer (circular buffer)
                 if not self.is_voice_active:
@@ -182,22 +194,27 @@ class CobraVAD:
                 # Handle voice activity
                 if is_voice:
                     if not self.is_voice_active:
-                        # Voice just started
-                        self.is_voice_active = True
-                        self.is_listening = True
+                        # Store the current frame while counting up to min_voice_frames
+                        self.pre_voice_buffer.append(pcm)
+                        self.voice_frames_count += 1
 
-                        # Add pre-voice buffer to audio buffer
-                        self.audio_buffer = list(self.pre_voice_buffer)
-                        self.pre_voice_buffer = []
+                        if self.voice_frames_count >= self.min_voice_frames:
+                            # Voice activity confirmed
+                            self.is_voice_active = True
+                            self.is_listening = True
+                            self.voice_start_time = time.time()
 
-                        if self.debug:
-                            print("\nVoice activity started")
+                            # Add pre-voice buffer to audio buffer (includes the initial voice frames)
+                            self.audio_buffer = list(self.pre_voice_buffer)
+                            self.pre_voice_buffer = []
 
-                    # Reset silence timer
-                    self.last_voice_end_time = None
-
-                    # Add frame to audio buffer
-                    self.audio_buffer.append(pcm)
+                            if self.debug:
+                                print("\nVoice activity started")
+                    else:
+                        # Continue recording voice
+                        self.voice_frames_count += 1
+                        self.last_voice_end_time = None
+                        self.audio_buffer.append(pcm)
                 elif self.is_voice_active:
                     # Voice was active but now silent
                     if self.last_voice_end_time is None:
@@ -206,11 +223,12 @@ class CobraVAD:
                     # Add frame to buffer during timeout period
                     self.audio_buffer.append(pcm)
 
-                    # Check if silence timeout has elapsed
-                    if time.time() - self.last_voice_end_time > self.voice_timeout:
+                    # Check if silence has persisted long enough using SILENCE_DURATION
+                    if time.time() - self.last_voice_end_time > SILENCE_DURATION:
                         # Voice activity ended
                         if self.debug:
-                            print(f"\nVoice activity ended after {len(self.audio_buffer)} frames")
+                            duration = time.time() - self.voice_start_time if self.voice_start_time else 0
+                            print(f"\nVoice activity ended after {duration:.2f} seconds")
 
                         # Put the complete audio segment in the queue
                         audio_data = self._buffer_to_audio_data(self.audio_buffer)
@@ -220,6 +238,11 @@ class CobraVAD:
                         self.is_voice_active = False
                         self.is_listening = False
                         self.audio_buffer = []
+                        self.voice_start_time = None
+                        self.voice_frames_count = 0
+                else:
+                    # No voice activity
+                    self.voice_frames_count = 0
 
         except Exception as e:
             if self.debug:
@@ -327,16 +350,22 @@ class CobraVAD:
                 # Handle voice activity
                 if is_voice:
                     if not self.is_voice_active:
-                        # Voice just started
-                        self.is_voice_active = True
-                        speech_detected = True
+                        # Store the current frame while counting up to min_voice_frames
+                        self.pre_voice_buffer.append(pcm)
+                        self.voice_frames_count += 1
 
-                        # Add pre-voice buffer to audio buffer
-                        self.audio_buffer = list(self.pre_voice_buffer)
-                        self.pre_voice_buffer = []
+                        if self.voice_frames_count >= self.min_voice_frames:
+                            # Voice activity confirmed
+                            self.is_voice_active = True
+                            self.is_listening = True
+                            self.voice_start_time = time.time()
 
-                        if self.debug:
-                            print("\nVoice activity started")
+                            # Add pre-voice buffer to audio buffer (includes the initial voice frames)
+                            self.audio_buffer = list(self.pre_voice_buffer)
+                            self.pre_voice_buffer = []
+
+                            if self.debug:
+                                print("\nVoice activity started")
 
                     # Reset silence timer
                     self.last_voice_end_time = None

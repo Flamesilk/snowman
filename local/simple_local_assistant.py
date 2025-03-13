@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 import pvporcupine
 from pvrecorder import PvRecorder
 from tavily import TavilyClient
+from cobra_vad import CobraVAD
 
 # Use faster-whisper for speech recognition
 from faster_whisper import WhisperModel
@@ -39,23 +40,28 @@ from faster_whisper import WhisperModel
 # Constants
 SAMPLE_RATE = 16000
 CHANNELS = 1
-CHUNK_SIZE = 512
+FRAME_LENGTH = 512
 SILENCE_THRESHOLD = 0.025
 SILENCE_DURATION = 1.5
 INITIAL_SILENCE_DURATION = 0.4  # Shorter silence duration for initial question after wake word
 INTERRUPTION_THRESHOLD = 0.1
 INTERRUPTION_MIN_CHUNKS = 3
 DEBUG_AUDIO = True
-MAX_RECORDING_TIME = 20
 USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
 ENABLE_INTERRUPTION = False
 USE_EDGE_TTS = True
-CONVERSATION_TIMEOUT = 30  # Timeout in seconds for no user input
+
+# Timeout settings
+UTTERANCE_TIMEOUT = 15.0  # Maximum time to wait for a single utterance (in seconds)
+INACTIVITY_TIMEOUT = 15.0  # Time to wait for next user input before ending conversation (in seconds)
+
+# VAD settings
+VAD_THRESHOLD = 0.7  # Voice probability threshold for Cobra VAD
 
 # Sound effect paths
 SOUND_EFFECTS = {
-    "wake": "sounds/wake.mp3",  # Sound played when wake word is detected
+    "wake": "sounds/wake_chime.m4a",  # Shorter wake sound
     "start_listening": "sounds/start_listening.m4a",  # Sound played when starting to listen
     "start_transcribe": "sounds/start_transcribe.mp3",  # Sound played before starting transcription
     "pre_response": "sounds/pre_response.mp3",  # Sound played before getting AI response
@@ -129,7 +135,7 @@ For other languages, try to respond in the same language if possible, otherwise 
 """
 
 class SimpleLocalAssistant:
-    def __init__(self, use_wake_word=True, debug=False, language="english"):
+    def __init__(self, debug=False):
         """Initialize the voice assistant"""
         # Load environment variables
         load_dotenv()
@@ -140,8 +146,8 @@ class SimpleLocalAssistant:
         if DEBUG_AUDIO:
             print("🔍 Debug mode enabled - will print audio volume levels")
 
-        # Set initial language (will be updated based on speech detection)
-        self.language = language.lower()
+        # Set initial language
+        self.language = "english"
         print(f"🌐 Initial language set to: {self.language}")
 
         # Check required environment variables
@@ -150,18 +156,8 @@ class SimpleLocalAssistant:
             print("❌ GOOGLE_API_KEY is required in .env file")
             sys.exit(1)
 
-        print(f"Using Google API key: {self.google_api_key[:5]}...{self.google_api_key[-5:]}")
-
-        # Set thresholds
-        if USE_FIXED_THRESHOLDS:
-            self.silence_threshold = SILENCE_THRESHOLD
-            self.interruption_threshold = INTERRUPTION_THRESHOLD
-            print(f"Using fixed thresholds - Silence: {self.silence_threshold}, Interruption: {self.interruption_threshold}")
-        else:
-            # Calibrate microphone to set thresholds
-            print("Calibrating microphone for dynamic thresholds...")
-            self.silence_threshold, self.interruption_threshold = self.calibrate_microphone()
-            print(f"Using calibrated thresholds - Silence: {self.silence_threshold}, Interruption: {self.interruption_threshold}")
+        # Initialize Cobra VAD
+        self.init_cobra_vad()
 
         # Initialize speech recognition
         self.init_speech_recognition()
@@ -170,10 +166,9 @@ class SimpleLocalAssistant:
         self.use_silero_tts = False
         self.init_edge_tts()
 
-        # Initialize wake word detection if enabled
-        self.use_wake_word = use_wake_word
-        if self.use_wake_word:
-            self.init_porcupine()
+        # Initialize wake word detection
+        self.use_wake_word = True
+        self.init_porcupine()
 
         # Initialize Gemini model
         self.init_gemini()
@@ -196,19 +191,40 @@ class SimpleLocalAssistant:
 
         print("✅ Voice assistant initialized and ready")
 
+    def init_cobra_vad(self):
+        """Initialize Cobra VAD for speech detection"""
+        try:
+            # Get access key from environment
+            access_key = os.getenv("PORCUPINE_ACCESS_KEY")
+            if not access_key:
+                print("❌ PORCUPINE_ACCESS_KEY is required in .env file for Cobra VAD")
+                sys.exit(1)
+
+            # Create Cobra VAD instance
+            self.cobra_vad = CobraVAD(
+                access_key=access_key,
+                threshold=VAD_THRESHOLD,
+                debug=DEBUG_AUDIO
+            )
+
+            print(f"✅ Cobra VAD initialized with threshold: {VAD_THRESHOLD}")
+        except Exception as e:
+            print(f"❌ Error initializing Cobra VAD: {e}")
+            sys.exit(1)
+
     def calibrate_microphone(self):
         """Measure ambient noise and calibrate thresholds using PvRecorder"""
         print("🎙️ Calibrating microphone (please be quiet)...")
 
         recorder = None
         try:
-            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
+            recorder = PvRecorder(device_index=-1, frame_length=FRAME_LENGTH)
             recorder.start()
 
             # Collect ambient noise samples
             ambient_levels = []
             calibration_time = 2  # seconds
-            samples_to_collect = int(calibration_time * SAMPLE_RATE / CHUNK_SIZE)
+            samples_to_collect = int(calibration_time * SAMPLE_RATE / FRAME_LENGTH)
 
             for _ in range(samples_to_collect):
                 try:
@@ -508,113 +524,28 @@ class SimpleLocalAssistant:
 
             print(f"Using audio device: {recorder.selected_device}")
             print(f"Wake word frame length: {self.porcupine.frame_length}")
-            print(f"Audio chunk size: {CHUNK_SIZE}")
-            print(f"Silence threshold: {SILENCE_THRESHOLD}")
-
-            # Buffer to store audio frames after wake word
-            post_wake_frames = []
-            is_collecting = False
-            silent_chunks = 0
-            required_silent_chunks = int(INITIAL_SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
-            speech_detected = False
-            collection_start_time = None
-
-            # Create a small circular buffer to keep the last few frames before wake word
-            pre_wake_buffer = []
-            PRE_WAKE_BUFFER_SIZE = 20  # Increased buffer size to capture more context
 
             while not self.should_exit:
                 try:
                     pcm = recorder.read()
 
-                    if not is_collecting:
-                        # Keep the last few frames in a circular buffer
-                        pre_wake_buffer.append(np.array(pcm, dtype=np.int16).tobytes())
-                        if len(pre_wake_buffer) > PRE_WAKE_BUFFER_SIZE:
-                            pre_wake_buffer.pop(0)
+                    # Process for wake word detection
+                    keyword_index = self.porcupine.process(pcm)
+                    if keyword_index >= 0:
+                        detected_word = self.keywords[keyword_index]
+                        print(f"🎯 Wake word detected: '{detected_word}'!")
 
-                        # Process for wake word detection
-                        keyword_index = self.porcupine.process(pcm)
-                        if keyword_index >= 0:
-                            print("🎯 Wake word detected!")
+                        # Start VAD monitoring before playing wake sound
+                        self.cobra_vad.start_monitoring()
 
-                            is_collecting = True
-                            post_wake_frames = []
+                        # Play wake sound (shorter duration)
+                        self.play_sound_effect("wake")
 
-                            # Keep a few frames from before the wake word to catch early speech
-                            post_wake_frames.extend(pre_wake_buffer[-10:])  # Keep last 5 frames
-                            pre_wake_buffer = []
+                        # Start conversation with Cobra VAD already monitoring
+                        self.handle_conversation()
 
-                            # Start collecting immediately without delay
-                            silent_chunks = 0
-                            speech_detected = False
-                            collection_start_time = time.time()
-                            print("🎤 Started collecting speech after wake word...")
-                            continue
-                    else:
-                        # Collecting speech after wake word
-                        # Add the frame to our buffer
-                        post_wake_frames.append(np.array(pcm, dtype=np.int16).tobytes())
-
-                        # Calculate volume
-                        audio_data = np.array(pcm, dtype=np.int16)
-                        volume_norm = np.abs(audio_data).mean() / 32768.0
-
-                        # Print volume for debugging
-                        if DEBUG_AUDIO:
-                            print(f"Post-wake volume: {volume_norm:.4f} (threshold: {SILENCE_THRESHOLD * 0.6})")
-
-                        # Use an even lower threshold for initial speech detection
-                        current_threshold = SILENCE_THRESHOLD * 0.6  # Lower threshold to 60% of silence threshold
-                        if volume_norm > current_threshold:
-                            if not speech_detected:
-                                print(f"Speech detected after wake word! (volume: {volume_norm:.4f})")
-                            speech_detected = True
-                            silent_chunks = 0
-                        else:
-                            silent_chunks += 1
-                            if DEBUG_AUDIO and silent_chunks > 0:
-                                print(f"Silent chunk {silent_chunks}/{required_silent_chunks} (volume: {volume_norm:.4f})")
-
-                        # Calculate elapsed time
-                        elapsed_time = time.time() - collection_start_time if collection_start_time else 0
-
-                        # Calculate required silent chunks based on whether speech was detected
-                        # Use shorter silence duration for initial question
-                        required_silent_chunks = int(INITIAL_SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
-
-                        # Stop collecting if:
-                        # 1. We've detected speech and then silence (normal end)
-                        # 2. We've hit the maximum recording time
-                        # 3. We've collected too much audio without any speech
-                        if ((speech_detected and silent_chunks >= required_silent_chunks) or
-                            elapsed_time >= MAX_RECORDING_TIME or
-                            (not speech_detected and elapsed_time >= 1.0)):  # Increased timeout to 3 seconds
-
-                            print(f"Stopping collection after {elapsed_time:.1f} seconds")
-                            print(f"Speech detected: {speech_detected}")
-                            print(f"Silent chunks: {silent_chunks}")
-                            print(f"Frames collected: {len(post_wake_frames)}")
-
-                            # If we detected speech, process it
-                            if len(post_wake_frames) > 0:
-                                if not speech_detected:
-                                    # Only play wake sound if no speech was detected
-                                    self.play_sound_effect("wake")
-                                print("Processing collected audio...")
-                                audio_data = b''.join(post_wake_frames)
-                                self.handle_conversation(initial_audio=audio_data)
-                            else:
-                                print("No audio frames collected, starting normal conversation...")
-                                # Play wake sound when starting normal conversation
-                                self.play_sound_effect("wake")
-                                self.handle_conversation()
-
-                            # Reset and continue listening for wake word
-                            is_collecting = False
-                            post_wake_frames = []
-                            pre_wake_buffer = []  # Clear the pre-wake buffer
-                            print("👂 Listening for wake word...")
+                        # After conversation, go back to listening for wake word
+                        print("👂 Listening for wake word...")
 
                 except Exception as e:
                     print(f"Error processing audio: {e}")
@@ -633,175 +564,35 @@ class SimpleLocalAssistant:
                 recorder.delete()
 
     def record_audio(self):
-        """Record audio from microphone until silence is detected"""
-        if USE_MANUAL_RECORDING:
-            return self.record_audio_manual()
-        else:
-            return self.record_audio_auto()
-
-    def record_audio_manual(self):
-        """Record audio with manual control (press Enter to start/stop)"""
-        print("🎤 Press Enter to start recording...")
-        input()  # Wait for Enter key
-
-        # Play start listening sound
-        self.play_sound_effect("start_listening")
-
-        print("🎤 Recording... (press Enter to stop)")
-        self.is_listening = True
-
-        frames = []
-        recorder = None
-
-        # Create a thread to wait for Enter key
-        stop_recording = threading.Event()
-
-        def wait_for_enter():
-            input()  # Wait for Enter key
-            stop_recording.set()
-
-        input_thread = threading.Thread(target=wait_for_enter)
-        input_thread.daemon = True
-        input_thread.start()
-
-        # Record until Enter is pressed or timeout
-        start_time = time.time()
-        try:
-            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
-            recorder.start()
-
-            while not stop_recording.is_set() and time.time() - start_time < MAX_RECORDING_TIME:
-                try:
-                    pcm = recorder.read()
-                    frames.append(np.array(pcm, dtype=np.int16).tobytes())
-
-                    # Print volume for debugging
-                    if DEBUG_AUDIO and len(frames) % 20 == 0:  # Only print every 20 frames
-                        audio_data = np.array(pcm, dtype=np.int16)
-                        volume_norm = np.abs(audio_data).mean() / 32768.0
-                        print(f"Recording volume: {volume_norm:.4f}")
-                except Exception as e:
-                    print(f"Error reading audio: {e}")
-                    break
-
-        finally:
-            if recorder is not None:
-                recorder.stop()
-                recorder.delete()
-            self.is_listening = False
-
-            # Print recording stats
-            elapsed_time = time.time() - start_time
-            print(f"Recording finished after {elapsed_time:.1f} seconds")
-
-        return b''.join(frames)
-
-    def record_audio_auto(self):
-        """Record audio from microphone until silence is detected (automatic)"""
-        print("🎤 Listening... (automatic mode)")
-
-        # Play start listening sound
-        self.play_sound_effect("start_listening")
-
-        # Optionally recalibrate if not using fixed thresholds
-        if not USE_FIXED_THRESHOLDS:
-            print("Recalibrating thresholds before recording...")
-            self.silence_threshold, self.interruption_threshold = self.calibrate_microphone()
+        """Record audio from microphone using Cobra VAD"""
+        print("🎤 Listening with Cobra VAD...")
 
         self.is_listening = True
-        frames = []
-        silent_chunks = 0
-        required_silent_chunks = int(SILENCE_DURATION * SAMPLE_RATE / CHUNK_SIZE)
 
-        # Variables to track speech activity
-        speech_detected = False
-        max_volume = 0.0
-        interruption_chunks = 0
-
-        # Initialize PvRecorder
-        recorder = None
         try:
-            recorder = PvRecorder(device_index=-1, frame_length=CHUNK_SIZE)
-            recorder.start()
+            # Ensure VAD monitoring is started
+            if not self.cobra_vad.is_monitoring:
+                print("Starting VAD monitoring...")
+                self.cobra_vad.start_monitoring()
 
-            print(f"Using audio device: {recorder.selected_device}")
-
-            # Add timeout mechanism
-            start_time = time.time()
-            max_chunks = int(MAX_RECORDING_TIME * SAMPLE_RATE / CHUNK_SIZE)
-            chunk_count = 0
-
-            # Wait a moment before starting to record
-            time.sleep(0.1)
-
-            while not self.should_exit and self.is_listening:
-                try:
-                    # Check for timeout
-                    if chunk_count >= max_chunks:
-                        print(f"⚠️ Recording timeout after {MAX_RECORDING_TIME} seconds")
-                        break
-
-                    # Get audio frame from PvRecorder
-                    pcm = recorder.read()
-                    frames.append(np.array(pcm, dtype=np.int16).tobytes())
-                    chunk_count += 1
-
-                    # Calculate volume using numpy
-                    audio_data = np.array(pcm, dtype=np.int16)
-                    volume_norm = np.abs(audio_data).mean() / 32768.0
-                    max_volume = max(max_volume, volume_norm)
-
-                    # Print volume for debugging
-                    if DEBUG_AUDIO:
-                        if chunk_count % 10 == 0:  # Only print every 10 frames
-                            print(f"Recording volume: {volume_norm:.4f} (max: {max_volume:.4f}, threshold: {SILENCE_THRESHOLD})")
-
-                    # Detect speech
-                    if volume_norm > SILENCE_THRESHOLD:
-                        speech_detected = True
-                        silent_chunks = 0
-
-                        # Check for interruption if enabled and speech was detected
-                        if ENABLE_INTERRUPTION and speech_detected:
-                            if volume_norm > INTERRUPTION_THRESHOLD:
-                                interruption_chunks += 1
-                                if interruption_chunks >= INTERRUPTION_MIN_CHUNKS:
-                                    print(f"🔊 Interruption detected (volume: {volume_norm:.4f})")
-                                    break
-                            else:
-                                interruption_chunks = 0
-                    else:
-                        silent_chunks += 1
-                        interruption_chunks = 0  # Reset interruption counter during silence
-                        # Only end recording if we've detected some speech first
-                        if speech_detected and silent_chunks >= required_silent_chunks:
-                            if DEBUG_AUDIO:
-                                print(f"Silence detected for {SILENCE_DURATION}s after speech, stopping recording")
-                                print(f"Final max volume: {max_volume:.4f}")
-                            break
-
-                except Exception as e:
-                    print(f"Error reading audio: {e}")
-                    break
-
-        finally:
-            # Clean up PvRecorder
-            if recorder is not None:
-                recorder.stop()
-                recorder.delete()
-            self.is_listening = False
+            # Get the next speech segment with timeout
+            audio_data = self.cobra_vad.get_next_audio(timeout=UTTERANCE_TIMEOUT)
 
             # Print recording stats
-            elapsed_time = time.time() - start_time
-            print(f"Recording finished after {elapsed_time:.1f} seconds")
-            print(f"Max volume detected: {max_volume:.4f}")
+            if audio_data:
+                duration = len(audio_data) / (SAMPLE_RATE * 2)  # 16-bit audio at 16kHz
+                print(f"Recording finished after {duration:.1f} seconds")
+            else:
+                print(f"⚠️ No speech detected within {UTTERANCE_TIMEOUT} seconds")
 
-        # If we didn't detect any speech, return empty data
-        if not speech_detected:
-            print("⚠️ No speech detected, please try again")
+            return audio_data or b''
+
+        except Exception as e:
+            print(f"❌ Error recording audio with Cobra VAD: {e}")
             return b''
-
-        return b''.join(frames)
+        finally:
+            # Don't stop monitoring here - let the conversation handler manage the VAD state
+            self.is_listening = False
 
     def transcribe_audio(self, audio_data):
         """Convert audio to text using Whisper with automatic language detection"""
@@ -994,7 +785,7 @@ class SimpleLocalAssistant:
                 Rules:
 
                 1. Please make a careful decision about if search is needed based on the conversation history, and set need_search accordingly.
-                   - Set need_search=true if the query needs a search.
+                   - Set need_search=true only if the query clearly needs a search to answer. If it needs a clarification from the user, set need_search=false.
                    - Set need_search=false if the query is a general question that can be answered with the current knowledge.
 
                 2. For response_text:
@@ -1027,7 +818,7 @@ class SimpleLocalAssistant:
                 规则:
 
                 1. 结合对话历史，决定当前是否需要搜索，来设置 need_search
-                    - 如果需要搜索，设置 need_search=true
+                    - 如果的确需要搜索才能回答问题，设置 need_search=true。如果需要进一步澄清问题，设置 need_search=false
                     - 如果不需要搜索，设置 need_search=false
 
                 2. response_text内容：
@@ -1149,7 +940,17 @@ class SimpleLocalAssistant:
 
     def speak_text(self, text):
         """Convert text to speech and play it"""
-        self.speak_text_edge(text)
+        try:
+            # Pause VAD monitoring while speaking
+            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+                self.cobra_vad.pause_monitoring()
+
+            # Speak the text
+            self.speak_text_edge(text)
+        finally:
+            # Resume VAD monitoring after speaking
+            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+                self.cobra_vad.resume_monitoring()
 
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
@@ -1269,151 +1070,169 @@ class SimpleLocalAssistant:
         # Initialize last activity timestamp
         last_activity_time = time.time()
 
-        # Process initial audio if provided
-        if initial_audio:
-            try:
-                # Convert speech to text
-                whisper_start = time.time()
-                user_input = self.transcribe_audio(initial_audio)
-                whisper_time = time.time() - whisper_start
-                self.whisper_times.append(whisper_time)
+        try:
+            # Start VAD monitoring at the beginning of conversation
+            if not self.cobra_vad.is_monitoring:
+                print("Starting VAD monitoring for conversation...")
+                self.cobra_vad.start_monitoring()
 
-                if user_input:
+            # Process initial audio if provided
+            if initial_audio:
+                try:
+                    # Convert speech to text
+                    whisper_start = time.time()
+                    user_input = self.transcribe_audio(initial_audio)
+                    whisper_time = time.time() - whisper_start
+                    self.whisper_times.append(whisper_time)
+
+                    if user_input:
+                        print(f"🎤 You said: '{user_input}'")
+                        self.conversation_turns += 1
+                        last_activity_time = time.time()
+
+                        # Process the input and get AI response
+                        gemini_start = time.time()
+                        ai_response = self.get_ai_response(user_input)
+                        gemini_time = time.time() - gemini_start
+                        self.gemini_times.append(gemini_time)
+
+                        if ai_response:
+                            # Speak the response
+                            edge_tts_start = time.time()
+                            self.speak_text(ai_response)
+                            edge_tts_time = time.time() - edge_tts_start
+                            self.edge_tts_times.append(edge_tts_time)
+                            last_activity_time = time.time()
+                except Exception as e:
+                    print(f"Error processing initial audio: {e}")
+
+            # Continue with normal conversation loop
+            while in_conversation and not self.should_exit:
+                try:
+                    # Check for timeout
+                    if time.time() - last_activity_time > INACTIVITY_TIMEOUT:
+                        print(f"\n⏰ No activity detected for {INACTIVITY_TIMEOUT} seconds")
+                        self.play_pre_recorded_message("goodbye")
+
+                        # Calculate and print session statistics
+                        self.calculate_session_stats()
+                        self.print_session_stats()
+                        return
+
+                    # Ensure VAD is monitoring before recording
+                    if not self.cobra_vad.is_monitoring:
+                        print("Restarting VAD monitoring...")
+                        self.cobra_vad.start_monitoring()
+
+                    # Record user's speech
+                    audio_data = self.record_audio()
+
+                    if not audio_data or len(audio_data) == 0:
+                        print("⚠️ No audio data recorded")
+                        continue
+
+                    # Update last activity timestamp when we get valid audio input
+                    last_activity_time = time.time()
+
+                    # Play sound before starting transcription
+                    self.play_sound_effect("start_transcribe")
+
+                    # Convert speech to text
+                    whisper_start = time.time()
+                    user_input = self.transcribe_audio(audio_data)
+                    whisper_time = time.time() - whisper_start
+                    self.whisper_times.append(whisper_time)
+
+                    if not user_input:
+                        self.play_pre_recorded_message("not_understood")
+                        continue
+
                     print(f"🎤 You said: '{user_input}'")
                     self.conversation_turns += 1
-                    last_activity_time = time.time()
 
-                    # Process the input and get AI response
-                    gemini_start = time.time()
-                    ai_response = self.get_ai_response(user_input)
-                    gemini_time = time.time() - gemini_start
-                    self.gemini_times.append(gemini_time)
+                    # Check if the user wants to end the conversation
+                    end_phrases = END_CONVERSATION_PHRASES
+                    if self.language == "chinese":
+                        end_phrases = CHINESE_END_CONVERSATION_PHRASES + END_CONVERSATION_PHRASES
 
-                    if ai_response:
-                        # Speak the response
-                        edge_tts_start = time.time()
-                        self.speak_text(ai_response)
-                        edge_tts_time = time.time() - edge_tts_start
-                        self.edge_tts_times.append(edge_tts_time)
-                        last_activity_time = time.time()
-            except Exception as e:
-                print(f"Error processing initial audio: {e}")
+                    # For English phrases, use case-insensitive comparison
+                    # For Chinese phrases, use exact match
+                    should_end = any(
+                        (phrase in user_input.lower() if all(ord(c) < 128 for c in phrase) else phrase in user_input)
+                        for phrase in end_phrases
+                    )
 
-        # Continue with normal conversation loop
-        while in_conversation and not self.should_exit:
-            try:
-                # Check for timeout
-                if time.time() - last_activity_time > CONVERSATION_TIMEOUT:
-                    print(f"\n⏰ No activity detected for {CONVERSATION_TIMEOUT} seconds")
-                    self.play_pre_recorded_message("goodbye")
+                    if should_end:
+                        print("🔚 Ending conversation")
+                        self.play_pre_recorded_message("goodbye")
 
-                    # Calculate and print session statistics
-                    self.calculate_session_stats()
-                    self.print_session_stats()
-                    return
+                        # Calculate and print session statistics
+                        self.calculate_session_stats()
+                        self.print_session_stats()
+                        return
 
-                # Record user's speech
-                audio_data = self.record_audio()
+                    # Play sound before getting AI response
+                    self.play_sound_effect("pre_response")
 
-                if not audio_data or len(audio_data) == 0:
-                    print("⚠️ No audio data recorded")
-                    continue
+                    # Get AI response
+                    try:
+                        gemini_start = time.time()
+                        ai_response = self.get_ai_response(user_input)
+                        gemini_time = time.time() - gemini_start
+                        self.gemini_times.append(gemini_time)
 
-                # Update last activity timestamp when we get valid audio input
-                last_activity_time = time.time()
+                        if ai_response:
+                            # Speak the response
+                            edge_tts_start = time.time()
+                            self.speak_text(ai_response)
+                            edge_tts_time = time.time() - edge_tts_start
+                            self.edge_tts_times.append(edge_tts_time)
 
-                # Play sound before starting transcription
-                self.play_sound_effect("start_transcribe")
+                            # Update last activity time after AI response
+                            last_activity_time = time.time()
 
-                # Convert speech to text
-                whisper_start = time.time()
-                user_input = self.transcribe_audio(audio_data)
-                whisper_time = time.time() - whisper_start
-                self.whisper_times.append(whisper_time)
-
-                if not user_input:
-                    self.play_pre_recorded_message("not_understood")
-                    continue
-
-                print(f"🎤 You said: '{user_input}'")
-                self.conversation_turns += 1
-
-                # Check if the user wants to end the conversation
-                end_phrases = END_CONVERSATION_PHRASES
-                if self.language == "chinese":
-                    end_phrases = CHINESE_END_CONVERSATION_PHRASES + END_CONVERSATION_PHRASES
-
-                # For English phrases, use case-insensitive comparison
-                # For Chinese phrases, use exact match
-                should_end = any(
-                    (phrase in user_input.lower() if all(ord(c) < 128 for c in phrase) else phrase in user_input)
-                    for phrase in end_phrases
-                )
-
-                if should_end:
-                    print("🔚 Ending conversation")
-                    self.play_pre_recorded_message("goodbye")
-
-                    # Calculate and print session statistics
-                    self.calculate_session_stats()
-                    self.print_session_stats()
-                    return
-
-                # Play sound before getting AI response
-                self.play_sound_effect("pre_response")
-
-                # Get AI response
-                try:
-                    gemini_start = time.time()
-                    ai_response = self.get_ai_response(user_input)
-                    gemini_time = time.time() - gemini_start
-                    self.gemini_times.append(gemini_time)
-
-                    if ai_response:
-                        # Speak the response
-                        edge_tts_start = time.time()
-                        self.speak_text(ai_response)
-                        edge_tts_time = time.time() - edge_tts_start
-                        self.edge_tts_times.append(edge_tts_time)
-
-                        # Update last activity time after AI response
-                        last_activity_time = time.time()
-
-                        print("👂 Continuing conversation... (say 'goodbye' to end)")
-                    else:
-                        # Fallback response if AI fails
-                        if self.language == "chinese":
-                            self.speak_text("抱歉，我无法生成回应。请再试一次。")
+                            print("👂 Continuing conversation... (say 'goodbye' to end)")
                         else:
-                            self.speak_text("Sorry, I couldn't generate a response. Please try again.")
-                        # Update last activity time even for fallback response
+                            # Fallback response if AI fails
+                            if self.language == "chinese":
+                                self.speak_text("抱歉，我无法生成回应。请再试一次。")
+                            else:
+                                self.speak_text("Sorry, I couldn't generate a response. Please try again.")
+                            # Update last activity time even for fallback response
+                            last_activity_time = time.time()
+                    except Exception as e:
+                        print(f"❌ Error getting or speaking AI response: {e}")
+                        import traceback
+                        traceback.print_exc()
+                        # Provide a fallback response
+                        if self.language == "chinese":
+                            self.speak_text("抱歉，出现了一个错误。请再试一次。")
+                        else:
+                            self.speak_text("Sorry, there was an error. Please try again.")
+                        # Update last activity time even for error response
                         last_activity_time = time.time()
+
                 except Exception as e:
-                    print(f"❌ Error getting or speaking AI response: {e}")
+                    print(f"❌ Error in conversation handling: {e}")
                     import traceback
                     traceback.print_exc()
-                    # Provide a fallback response
-                    if self.language == "chinese":
-                        self.speak_text("抱歉，出现了一个错误。请再试一次。")
-                    else:
-                        self.speak_text("Sorry, there was an error. Please try again.")
-                    # Update last activity time even for error response
-                    last_activity_time = time.time()
-            except Exception as e:
-                print(f"❌ Error in conversation handling: {e}")
-                import traceback
-                traceback.print_exc()
-                # Try to recover and continue listening
-                try:
-                    if self.language == "chinese":
-                        self.speak_text("抱歉，出现了一个错误。我将继续聆听。")
-                    else:
-                        self.speak_text("Sorry, there was an error. I'll continue listening.")
-                    # Update last activity time for recovery response
-                    last_activity_time = time.time()
-                except:
-                    print("❌ Could not recover from error")
-                    in_conversation = False
+                    # Try to recover and continue listening
+                    try:
+                        if self.language == "chinese":
+                            self.speak_text("抱歉，出现了一个错误。我将继续聆听。")
+                        else:
+                            self.speak_text("Sorry, there was an error. I'll continue listening.")
+                        # Update last activity time for recovery response
+                        last_activity_time = time.time()
+                    except:
+                        print("❌ Could not recover from error")
+                        in_conversation = False
+
+        finally:
+            # Stop VAD monitoring when conversation ends
+            if self.cobra_vad.is_monitoring:
+                print("Stopping VAD monitoring at end of conversation...")
+                self.cobra_vad.stop_monitoring()
 
     def run(self):
         """Run the voice assistant"""
@@ -1456,6 +1275,8 @@ class SimpleLocalAssistant:
         self.should_exit = True
         if self.use_wake_word and hasattr(self, 'porcupine'):
             self.porcupine.delete()
+        if hasattr(self, 'cobra_vad'):
+            self.cobra_vad.cleanup()
         if hasattr(self, 'audio'):
             self.audio.terminate()
         print("✅ Voice assistant resources cleaned up")
@@ -1499,49 +1320,18 @@ class SimpleLocalAssistant:
 def main():
     parser = argparse.ArgumentParser(description="Simple Local Voice Assistant")
     parser.add_argument(
-        "--no-wake-word",
-        action="store_true",
-        help="Run in continuous mode without wake word detection"
-    )
-    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug mode to print audio volume levels"
     )
-    parser.add_argument(
-        "--manual",
-        action="store_true",
-        help="Use manual recording mode (press Enter to start/stop)"
-    )
-    parser.add_argument(
-        "--disable-interruption",
-        action="store_true",
-        help="Disable interruption detection (enabled by default)"
-    )
-    parser.add_argument(
-        "--language",
-        choices=["english", "chinese"],
-        default="english",
-        help="Set the language (english or chinese)"
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=30,
-        help="Conversation timeout in seconds (default: 30)"
-    )
     args = parser.parse_args()
 
-    # Set global options
-    global USE_MANUAL_RECORDING, ENABLE_INTERRUPTION, CONVERSATION_TIMEOUT
-    USE_MANUAL_RECORDING = args.manual
-    ENABLE_INTERRUPTION = not args.disable_interruption
-    CONVERSATION_TIMEOUT = args.timeout
+    # Set global debug mode
+    global DEBUG_AUDIO
+    DEBUG_AUDIO = args.debug
 
     assistant = SimpleLocalAssistant(
-        use_wake_word=not args.no_wake_word,
-        debug=args.debug,
-        language=args.language
+        debug=args.debug
     )
     assistant.run()
 
