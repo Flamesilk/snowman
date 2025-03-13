@@ -277,6 +277,26 @@ class CobraVAD:
         except:
             return None
 
+    def clear_audio_buffer(self):
+        """Clear any accumulated audio in the buffer"""
+        # Clear the audio queue
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except Queue.Empty:
+                break
+
+        # Reset all buffers and state
+        self.pre_voice_buffer = []
+        self.audio_buffer = []
+        self.is_voice_active = False
+        self.last_voice_end_time = None
+        self.voice_frames_count = 0
+        self.voice_start_time = None
+
+        if self.debug:
+            print("Cleared audio buffers and reset state")
+
     # def record_audio(self, device_index=-1, max_duration=20.0):
     #     """
     #     Record a single audio segment with voice activity detection

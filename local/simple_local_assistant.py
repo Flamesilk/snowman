@@ -590,6 +590,11 @@ class SimpleLocalAssistant:
             if not self.cobra_vad.is_monitoring:
                 print("Starting VAD monitoring...")
                 self.cobra_vad.start_monitoring()
+                # Add a small delay after starting monitoring
+                time.sleep(0.2)
+
+            # Clear any residual audio before starting new recording
+            self.cobra_vad.clear_audio_buffer()
 
             # Get the next speech segment with timeout
             audio_data = self.cobra_vad.get_next_audio(timeout=UTTERANCE_TIMEOUT)
@@ -986,9 +991,12 @@ class SimpleLocalAssistant:
                 self.tts_times.append(tts_time)
 
         finally:
-            # Resume VAD monitoring after speaking
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
-                self.cobra_vad.resume_monitoring()
+            # Clear any audio that might have accumulated during speaking
+            if hasattr(self, 'cobra_vad'):
+                self.cobra_vad.clear_audio_buffer()
+                # Resume VAD monitoring after speaking
+                if self.cobra_vad.is_monitoring:
+                    self.cobra_vad.resume_monitoring()
 
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
