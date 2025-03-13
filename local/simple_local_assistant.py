@@ -1061,11 +1061,20 @@ class SimpleLocalAssistant:
 
     def play_pre_recorded_message(self, message_type):
         """Play a pre-recorded message based on type and current language"""
-        if message_type in PRE_RECORDED_MESSAGES:
-            sound_effect = PRE_RECORDED_MESSAGES[message_type][self.language]
-            self.play_sound_effect(sound_effect)
-        else:
-            print(f"⚠️ No pre-recorded message found for: {message_type}")
+        try:
+            # Pause VAD monitoring while playing message
+            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+                self.cobra_vad.pause_monitoring()
+
+            if message_type in PRE_RECORDED_MESSAGES:
+                sound_effect = PRE_RECORDED_MESSAGES[message_type][self.language]
+                self.play_sound_effect(sound_effect)
+            else:
+                print(f"⚠️ No pre-recorded message found for: {message_type}")
+        finally:
+            # Resume VAD monitoring after playing message
+            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+                self.cobra_vad.resume_monitoring()
 
     def calculate_session_stats(self):
         """Calculate session statistics"""
