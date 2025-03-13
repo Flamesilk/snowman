@@ -277,169 +277,169 @@ class CobraVAD:
         except:
             return None
 
-    def record_audio(self, device_index=-1, max_duration=20.0):
-        """
-        Record a single audio segment with voice activity detection
+    # def record_audio(self, device_index=-1, max_duration=20.0):
+    #     """
+    #     Record a single audio segment with voice activity detection
 
-        This method starts recording and returns when voice activity is detected
-        and then ends, or when max_duration is reached.
+    #     This method starts recording and returns when voice activity is detected
+    #     and then ends, or when max_duration is reached.
 
-        Args:
-            device_index (int): Audio device index to use (-1 for default)
-            max_duration (float): Maximum recording duration in seconds
+    #     Args:
+    #         device_index (int): Audio device index to use (-1 for default)
+    #         max_duration (float): Maximum recording duration in seconds
 
-        Returns:
-            bytes: Audio data as bytes, or empty bytes if no speech detected
-        """
-        if self.is_monitoring:
-            if self.debug:
-                print("Already monitoring")
-            return b''
+    #     Returns:
+    #         bytes: Audio data as bytes, or empty bytes if no speech detected
+    #     """
+    #     if self.is_monitoring:
+    #         if self.debug:
+    #             print("Already monitoring")
+    #         return b''
 
-        try:
-            self.recorder = PvRecorder(
-                device_index=device_index,
-                frame_length=FRAME_LENGTH
-            )
+    #     try:
+    #         self.recorder = PvRecorder(
+    #             device_index=device_index,
+    #             frame_length=FRAME_LENGTH
+    #         )
 
-            if self.debug:
-                print(f"Using audio device: {self.recorder.selected_device}")
-                print("Listening for speech...")
+    #         if self.debug:
+    #             print(f"Using audio device: {self.recorder.selected_device}")
+    #             print("Listening for speech...")
 
-            self.recorder.start()
-            self.is_monitoring = True
-            self.is_listening = True
+    #         self.recorder.start()
+    #         self.is_monitoring = True
+    #         self.is_listening = True
 
-            # Initialize buffers and state
-            self.pre_voice_buffer = []
-            self.audio_buffer = []
-            self.is_voice_active = False
-            self.last_voice_end_time = None
+    #         # Initialize buffers and state
+    #         self.pre_voice_buffer = []
+    #         self.audio_buffer = []
+    #         self.is_voice_active = False
+    #         self.last_voice_end_time = None
 
-            # For timeout
-            start_time = time.time()
-            speech_detected = False
+    #         # For timeout
+    #         start_time = time.time()
+    #         speech_detected = False
 
-            # Main recording loop
-            while self.is_monitoring:
-                # Check for timeout
-                if time.time() - start_time > max_duration:
-                    if self.debug:
-                        print(f"\nRecording timeout after {max_duration} seconds")
-                    break
+    #         # Main recording loop
+    #         while self.is_monitoring:
+    #             # Check for timeout
+    #             if time.time() - start_time > max_duration:
+    #                 if self.debug:
+    #                     print(f"\nRecording timeout after {max_duration} seconds")
+    #                 break
 
-                pcm = self.recorder.read()
-                voice_probability = self.cobra.process(pcm)
+    #             pcm = self.recorder.read()
+    #             voice_probability = self.cobra.process(pcm)
 
-                # Determine if voice is active based on threshold
-                is_voice = voice_probability >= self.threshold
+    #             # Determine if voice is active based on threshold
+    #             is_voice = voice_probability >= self.threshold
 
-                if self.debug:
-                    # Print voice probability with visual indicator
-                    bar_length = int(voice_probability * 30)
-                    bar = '█' * bar_length + '░' * (30 - bar_length)
-                    status = "VOICE" if is_voice else "NOISE"
-                    print(f"\rProb: {voice_probability:.4f} [{bar}] {status}", end='', flush=True)
+    #             if self.debug:
+    #                 # Print voice probability with visual indicator
+    #                 bar_length = int(voice_probability * 30)
+    #                 bar = '█' * bar_length + '░' * (30 - bar_length)
+    #                 status = "VOICE" if is_voice else "NOISE"
+    #                 print(f"\rProb: {voice_probability:.4f} [{bar}] {status}", end='', flush=True)
 
-                # Handle pre-voice buffer (circular buffer)
-                if not self.is_voice_active:
-                    self.pre_voice_buffer.append(pcm)
-                    if len(self.pre_voice_buffer) > self.pre_buffer_size:
-                        self.pre_voice_buffer.pop(0)
+    #             # Handle pre-voice buffer (circular buffer)
+    #             if not self.is_voice_active:
+    #                 self.pre_voice_buffer.append(pcm)
+    #                 if len(self.pre_voice_buffer) > self.pre_buffer_size:
+    #                     self.pre_voice_buffer.pop(0)
 
-                # Handle voice activity
-                if is_voice:
-                    if not self.is_voice_active:
-                        # Store the current frame while counting up to min_voice_frames
-                        self.pre_voice_buffer.append(pcm)
-                        self.voice_frames_count += 1
+    #             # Handle voice activity
+    #             if is_voice:
+    #                 if not self.is_voice_active:
+    #                     # Store the current frame while counting up to min_voice_frames
+    #                     self.pre_voice_buffer.append(pcm)
+    #                     self.voice_frames_count += 1
 
-                        if self.voice_frames_count >= self.min_voice_frames:
-                            # Voice activity confirmed
-                            self.is_voice_active = True
-                            self.is_listening = True
-                            self.voice_start_time = time.time()
+    #                     if self.voice_frames_count >= self.min_voice_frames:
+    #                         # Voice activity confirmed
+    #                         self.is_voice_active = True
+    #                         self.is_listening = True
+    #                         self.voice_start_time = time.time()
 
-                            # Add pre-voice buffer to audio buffer (includes the initial voice frames)
-                            self.audio_buffer = list(self.pre_voice_buffer)
-                            self.pre_voice_buffer = []
+    #                         # Add pre-voice buffer to audio buffer (includes the initial voice frames)
+    #                         self.audio_buffer = list(self.pre_voice_buffer)
+    #                         self.pre_voice_buffer = []
 
-                            if self.debug:
-                                print("\nVoice activity started")
+    #                         if self.debug:
+    #                             print("\nVoice activity started")
 
-                    # Reset silence timer
-                    self.last_voice_end_time = None
+    #                 # Reset silence timer
+    #                 self.last_voice_end_time = None
 
-                    # Add frame to audio buffer
-                    self.audio_buffer.append(pcm)
-                elif self.is_voice_active:
-                    # Voice was active but now silent
-                    if self.last_voice_end_time is None:
-                        self.last_voice_end_time = time.time()
+    #                 # Add frame to audio buffer
+    #                 self.audio_buffer.append(pcm)
+    #             elif self.is_voice_active:
+    #                 # Voice was active but now silent
+    #                 if self.last_voice_end_time is None:
+    #                     self.last_voice_end_time = time.time()
 
-                    # Add frame to buffer during timeout period
-                    self.audio_buffer.append(pcm)
+    #                 # Add frame to buffer during timeout period
+    #                 self.audio_buffer.append(pcm)
 
-                    # Check if silence timeout has elapsed
-                    if time.time() - self.last_voice_end_time > self.voice_timeout:
-                        # Voice activity ended
-                        if self.debug:
-                            print(f"\nVoice activity ended after {len(self.audio_buffer)} frames")
-                        break
+    #                 # Check if silence timeout has elapsed
+    #                 if time.time() - self.last_voice_end_time > self.voice_timeout:
+    #                     # Voice activity ended
+    #                     if self.debug:
+    #                         print(f"\nVoice activity ended after {len(self.audio_buffer)} frames")
+    #                     break
 
-            # Convert buffer to audio data
-            if speech_detected and self.audio_buffer:
-                audio_data = self._buffer_to_audio_data(self.audio_buffer)
-                if self.debug:
-                    duration = len(audio_data) / (SAMPLE_RATE * 2)  # 16-bit = 2 bytes per sample
-                    print(f"Recorded {duration:.2f} seconds of audio")
-                return audio_data
-            else:
-                if self.debug:
-                    print("No speech detected")
-                return b''
+    #         # Convert buffer to audio data
+    #         if speech_detected and self.audio_buffer:
+    #             audio_data = self._buffer_to_audio_data(self.audio_buffer)
+    #             if self.debug:
+    #                 duration = len(audio_data) / (SAMPLE_RATE * 2)  # 16-bit = 2 bytes per sample
+    #                 print(f"Recorded {duration:.2f} seconds of audio")
+    #             return audio_data
+    #         else:
+    #             if self.debug:
+    #                 print("No speech detected")
+    #             return b''
 
-        except Exception as e:
-            if self.debug:
-                print(f"\nError recording audio: {e}")
-            return b''
-        finally:
-            self.is_monitoring = False
-            self.is_listening = False
-            if self.recorder is not None:
-                self.recorder.stop()
-                self.recorder.delete()
-                self.recorder = None
+    #     except Exception as e:
+    #         if self.debug:
+    #             print(f"\nError recording audio: {e}")
+    #         return b''
+    #     finally:
+    #         self.is_monitoring = False
+    #         self.is_listening = False
+    #         if self.recorder is not None:
+    #             self.recorder.stop()
+    #             self.recorder.delete()
+    #             self.recorder = None
 
-    def save_audio_to_file(self, audio_data, filename=None):
-        """
-        Save audio data to a WAV file
+    # def save_audio_to_file(self, audio_data, filename=None):
+    #     """
+    #     Save audio data to a WAV file
 
-        Args:
-            audio_data (bytes): Audio data to save
-            filename (str): Filename to save to (default: generated based on timestamp)
+    #     Args:
+    #         audio_data (bytes): Audio data to save
+    #         filename (str): Filename to save to (default: generated based on timestamp)
 
-        Returns:
-            str: Path to saved file
-        """
-        if not audio_data:
-            return None
+    #     Returns:
+    #         str: Path to saved file
+    #     """
+    #     if not audio_data:
+    #         return None
 
-        if filename is None:
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"voice_{timestamp}.wav"
+    #     if filename is None:
+    #         import datetime
+    #         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    #         filename = f"voice_{timestamp}.wav"
 
-        with wave.open(filename, 'wb') as wf:
-            wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit audio
-            wf.setframerate(SAMPLE_RATE)
-            wf.writeframes(audio_data)
+    #     with wave.open(filename, 'wb') as wf:
+    #         wf.setnchannels(1)
+    #         wf.setsampwidth(2)  # 16-bit audio
+    #         wf.setframerate(SAMPLE_RATE)
+    #         wf.writeframes(audio_data)
 
-        if self.debug:
-            print(f"Saved audio to {filename}")
+    #     if self.debug:
+    #         print(f"Saved audio to {filename}")
 
-        return filename
+    #     return filename
 
     def cleanup(self):
         """Clean up resources"""
@@ -451,78 +451,3 @@ class CobraVAD:
 
         if self.debug:
             print("Cleaned up Cobra VAD resources")
-
-
-# Simple test function
-def test_cobra_vad():
-    """Test the CobraVAD class"""
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Test Cobra VAD')
-    parser.add_argument('--access_key', help='Picovoice access key')
-    parser.add_argument('--threshold', type=float, default=DEFAULT_THRESHOLD,
-                        help=f'Voice probability threshold (default: {DEFAULT_THRESHOLD})')
-    parser.add_argument('--continuous', action='store_true',
-                        help='Run in continuous monitoring mode')
-    parser.add_argument('--save', action='store_true',
-                        help='Save detected speech to WAV files')
-
-    args = parser.parse_args()
-
-    try:
-        vad = CobraVAD(
-            access_key=args.access_key,
-            threshold=args.threshold,
-            debug=True
-        )
-
-        print("Cobra VAD Test")
-        print("==============")
-        print(f"Threshold: {args.threshold}")
-
-        if args.continuous:
-            print("Running in continuous monitoring mode")
-            print("Press Ctrl+C to exit")
-
-            vad.start_monitoring()
-
-            try:
-                while True:
-                    audio_data = vad.get_next_audio(timeout=1.0)
-                    if audio_data:
-                        print(f"Received audio segment: {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds")
-
-                        if args.save:
-                            vad.save_audio_to_file(audio_data)
-            except KeyboardInterrupt:
-                print("\nStopping...")
-            finally:
-                vad.stop_monitoring()
-        else:
-            print("Press Ctrl+C to exit")
-
-            try:
-                while True:
-                    print("\nListening for speech...")
-                    audio_data = vad.record_audio()
-
-                    if audio_data:
-                        print(f"Recorded {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds of audio")
-
-                        if args.save:
-                            vad.save_audio_to_file(audio_data)
-
-                    print("Press Ctrl+C to exit or wait for next recording...")
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                print("\nExiting...")
-
-    except Exception as e:
-        print(f"Error: {e}")
-    finally:
-        if 'vad' in locals():
-            vad.cleanup()
-
-
-if __name__ == "__main__":
-    test_cobra_vad()

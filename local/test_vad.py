@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Test script for Picovoice Cobra Voice Activity Detection (VAD)
-This script continuously records audio and shows the probability of human speech.
+This script provides two test modes:
+1. Continuous monitoring: Shows real-time voice probability
+2. Single recording: Records individual speech segments
 """
 
 import argparse
@@ -15,6 +17,7 @@ from threading import Thread
 import numpy as np
 import pvcobra
 from pvrecorder import PvRecorder
+from cobra_vad import CobraVAD
 
 # Try to load dotenv if available
 try:
@@ -166,6 +169,37 @@ class CobraVADDemo:
             time.sleep(0.1)
 
 
+def test_single_recording(access_key, threshold=0.5, save=True):
+    """Test CobraVAD in single recording mode"""
+    print("\nTesting CobraVAD Single Recording Mode")
+    print("======================================")
+
+    vad = CobraVAD(
+        access_key=access_key,
+        threshold=threshold,
+        debug=True
+    )
+
+    try:
+        while True:
+            print("\nListening for speech...")
+            audio_data = vad.get_next_audio(timeout=10.0)
+            if audio_data:
+                print(f"Recorded {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds of audio")
+
+                if save:
+                    filename = vad.save_audio_to_file(audio_data)
+                    if filename:
+                        print(f"Saved audio to {filename}")
+
+            print("Press Ctrl+C to exit or wait for next recording...")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        vad.cleanup()
+
+
 def main():
     parser = argparse.ArgumentParser(description='Cobra VAD Demo')
     parser.add_argument('--access_key', help='Picovoice access key')
@@ -177,6 +211,8 @@ def main():
                         help='Voice probability threshold (0.0 to 1.0)')
     parser.add_argument('--save_audio', action='store_true',
                         help='Save audio when voice is detected')
+    parser.add_argument('--mode', choices=['continuous', 'single'], default='continuous',
+                        help='Test mode: continuous monitoring or single recording')
 
     args = parser.parse_args()
 
@@ -188,19 +224,22 @@ def main():
             print("Error: Access key is required. Provide it with --access_key or set PORCUPINE_ACCESS_KEY environment variable.")
             return
 
-    demo = CobraVADDemo(
-        access_key=access_key,
-        audio_device_index=args.audio_device_index,
-        show_audio_devices=args.show_audio_devices,
-        threshold=args.threshold,
-        save_audio=args.save_audio
-    )
+    if args.mode == 'single':
+        test_single_recording(access_key, threshold=args.threshold, save=args.save_audio)
+    else:
+        demo = CobraVADDemo(
+            access_key=access_key,
+            audio_device_index=args.audio_device_index,
+            show_audio_devices=args.show_audio_devices,
+            threshold=args.threshold,
+            save_audio=args.save_audio
+        )
 
-    if args.show_audio_devices:
-        # Already shown in constructor
-        return
+        if args.show_audio_devices:
+            # Already shown in constructor
+            return
 
-    demo.start()
+        demo.start()
 
 
 if __name__ == "__main__":
