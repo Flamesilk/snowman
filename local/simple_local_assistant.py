@@ -488,8 +488,13 @@ class SimpleLocalAssistant:
             print("Search functionality may be limited")
             self.tavily_client = None  # Ensure client is None if initialization fails
 
-    def play_sound_effect(self, effect_name):
-        """Play a sound effect from the sounds directory in a non-blocking way"""
+    def play_sound_effect(self, effect_name, blocking=False):
+        """
+        Play a sound effect from the sounds directory
+        Args:
+            effect_name: Name of the sound effect to play
+            blocking: Whether to wait for the sound to finish playing
+        """
         if effect_name not in SOUND_EFFECTS:
             print(f"⚠️ Sound effect {effect_name} not found")
             return
@@ -501,13 +506,22 @@ class SimpleLocalAssistant:
 
         try:
             if sys.platform == "darwin":  # macOS
-                subprocess.Popen(["afplay", sound_path])
+                if blocking:
+                    subprocess.run(["afplay", sound_path], check=True)
+                else:
+                    subprocess.Popen(["afplay", sound_path])
             elif sys.platform == "win32":  # Windows
-                subprocess.Popen(["start", sound_path], shell=True)
+                if blocking:
+                    subprocess.run(["start", sound_path], shell=True, check=True)
+                else:
+                    subprocess.Popen(["start", sound_path], shell=True)
             elif sys.platform.startswith("linux"):  # Linux
                 for player in ["mpg123", "mpg321", "mplayer", "play"]:
                     try:
-                        subprocess.Popen([player, sound_path])
+                        if blocking:
+                            subprocess.run([player, sound_path], check=True)
+                        else:
+                            subprocess.Popen([player, sound_path])
                         break
                     except (subprocess.SubprocessError, FileNotFoundError):
                         continue
@@ -1068,11 +1082,12 @@ class SimpleLocalAssistant:
 
             if message_type in PRE_RECORDED_MESSAGES:
                 sound_effect = PRE_RECORDED_MESSAGES[message_type][self.language]
-                self.play_sound_effect(sound_effect)
+                # Use blocking mode for pre-recorded messages to ensure they complete
+                self.play_sound_effect(sound_effect, blocking=True)
             else:
                 print(f"⚠️ No pre-recorded message found for: {message_type}")
         finally:
-            # Resume VAD monitoring after playing message
+            # Resume VAD monitoring after message is fully played
             if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
                 self.cobra_vad.resume_monitoring()
 
