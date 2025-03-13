@@ -88,9 +88,10 @@ ENABLE_SEARCH = True
 
 # TTS Voice settings
 EDGE_TTS_VOICES = {
-    "english": "en-US-JennyNeural",
+    "english": "en-US-AvaMultilingualNeural",
     "chinese": "zh-CN-XiaoxiaoNeural",
-    "others": "en-US-AvaMultilingualNeural",  # Changed to Ava Multilingual
+    "german": "de-DE-KatjaNeural",  # Add German voice
+    "others": "en-US-AvaMultilingualNeural",  # For other languages
     # Add more languages as needed:
     # "japanese": "ja-JP-KeitaNeural",
     # "korean": "ko-KR-InJoonNeural",
@@ -101,6 +102,7 @@ EDGE_TTS_VOICES = {
 # Default voices
 ENGLISH_EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
 CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
+GERMAN_EDGE_TTS_VOICE = EDGE_TTS_VOICES["german"]  # Add German default voice
 OTHER_EDGE_TTS_VOICE = EDGE_TTS_VOICES["others"]
 
 # Wake word settings
@@ -272,7 +274,7 @@ class SimpleLocalAssistant:
             device = "cpu"
             compute_type = "int8"
 
-            print(f"Using faster-whisper on {device} with compute type {compute_type}")
+            print(f"Using faster-whisper {model_size} model on {device} with compute type {compute_type}")
 
             try:
                 # First try to load from local cache only
@@ -313,6 +315,8 @@ class SimpleLocalAssistant:
                 self.edge_tts_voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
             elif self.language == "english":
                 self.edge_tts_voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
+            elif self.language == "german":  # Add German voice selection
+                self.edge_tts_voice = os.getenv("GERMAN_EDGE_TTS_VOICE", GERMAN_EDGE_TTS_VOICE)
             else:
                 self.edge_tts_voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
@@ -328,12 +332,15 @@ class SimpleLocalAssistant:
                 print(f"⚠️ Voice '{self.edge_tts_voice}' not found. Available voices for {self.language}:")
                 for voice in voices:
                     if (self.language == "chinese" and voice["Locale"].startswith("zh-")) or \
-                       (self.language == "english" and voice["Locale"].startswith("en-")):
+                       (self.language == "english" and voice["Locale"].startswith("en-")) or \
+                       (self.language == "german" and voice["Locale"].startswith("de-")):
                         print(f"  - {voice['ShortName']} ({voice['Locale']})")
 
                 # Set default fallback voice based on language
                 if self.language == "chinese":
                     self.edge_tts_voice = CHINESE_EDGE_TTS_VOICE
+                elif self.language == "german":  # Add German fallback voice
+                    self.edge_tts_voice = GERMAN_EDGE_TTS_VOICE
                 else:
                     self.edge_tts_voice = ENGLISH_EDGE_TTS_VOICE
                 print(f"Using fallback voice: {self.edge_tts_voice}")
@@ -619,94 +626,76 @@ class SimpleLocalAssistant:
             self.is_listening = False
 
     def transcribe_audio(self, audio_data):
-        """Convert audio to text using Whisper with automatic language detection"""
-        temp_wav = None
+        """Transcribe audio using Whisper"""
+        if not self.whisper_model:
+            print("❌ Whisper model not initialized")
+            return None
+
         try:
-            # Save audio to temporary file using a proper temporary file
-            temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False).name
-            with wave.open(temp_wav, 'wb') as wf:
-                wf.setnchannels(CHANNELS)
-                wf.setsampwidth(2)  # 16-bit audio = 2 bytes
-                wf.setframerate(SAMPLE_RATE)
-                wf.writeframes(audio_data)
+            print("🎤 Transcribing audio...")
 
-            # Check if Whisper model is available
-            if not hasattr(self, 'whisper_model') or self.whisper_model is None:
-                print("❌ Whisper model not available")
-                return ""
+            # Create a temporary WAV file
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
+                # Write WAV header and audio data
+                with wave.open(temp_wav.name, 'wb') as wf:
+                    wf.setnchannels(1)  # Mono
+                    wf.setsampwidth(2)  # 16-bit audio
+                    wf.setframerate(SAMPLE_RATE)
+                    wf.writeframes(audio_data)
 
-            try:
-                # Transcribe with Whisper - with automatic language detection
-                print("Starting Whisper transcription...")
-                print(f"Audio file size: {len(audio_data)} bytes")
-                print(f"Audio duration: {len(audio_data) / (SAMPLE_RATE * 2):.2f} seconds")
-
-                # Start timing here - after file I/O
-                stt_start = time.time()
-
-                # Use faster-whisper API with conservative settings
+                # Use beam_size=5 and best_of=5 for better accuracy
+                # Set language=None to enable language detection
                 segments, info = self.whisper_model.transcribe(
-                    temp_wav,
-                    beam_size=1,
-                    best_of=1,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    no_speech_threshold=0.6,
-                    compression_ratio_threshold=2.4,
-                    log_prob_threshold=-1.0,
+                    temp_wav.name,
+                    beam_size=5,
+                    best_of=5,
+                    language=None,
+                    task="transcribe",
                     vad_filter=True,
-                    vad_parameters=dict(
-                        min_silence_duration_ms=1000,
-                        speech_pad_ms=200,
-                        threshold=0.4
-                    )
+                    vad_parameters=dict(min_silence_duration_ms=500)
                 )
 
-                # End timing here - before post-processing
-                stt_time = time.time() - stt_start
-                if hasattr(self, 'stt_times'):
-                    self.stt_times.append(stt_time)
-                print(f"🕒 Whisper transcription took {stt_time:.2f} seconds")
+                # Clean up the temporary file
+                try:
+                    os.unlink(temp_wav.name)
+                except:
+                    pass  # Ignore cleanup errors
 
-                # Get the detected language
+                # Get the detected language and its probability
                 detected_lang = info.language
-                lang_probability = info.language_probability
-                print(f"🌐 Detected language: {detected_lang} (probability: {lang_probability:.2f})")
+                lang_prob = info.language_probability
 
-                # Update the assistant's language setting based on detection
-                if lang_probability > 0.5:  # Only update if confidence is high enough
-                    if detected_lang == "zh":
+                print(f"🔍 Detected language: {detected_lang} (probability: {lang_prob:.2f})")
+
+                # Update assistant language based on detected language
+                if lang_prob > 0.5:  # Only update if confidence is high enough
+                    if detected_lang == "de":
+                        self.language = "german"
+                        print("🇩🇪 Switching to German mode")
+                    elif detected_lang == "zh":
                         self.language = "chinese"
+                        print("🇨🇳 Switching to Chinese mode")
                     elif detected_lang == "en":
                         self.language = "english"
+                        print("🇺🇸 Switching to English mode")
                     else:
-                        self.language = "others"
-                    # For other languages, keep current setting but adapt the response
+                        print(f"ℹ️ Detected language {detected_lang} will use fallback voice")
 
-                # Get the transcription text
-                transcription = " ".join([segment.text for segment in segments]).strip()
-                print(f"🎯 Whisper transcription: {transcription}")
-                return transcription
+                # Combine all segments into one text
+                text = " ".join([segment.text for segment in segments]).strip()
 
-            except Exception as e:
-                print(f"❌ Error during Whisper transcription: {e}")
-                import traceback
-                traceback.print_exc()
-                return ""
+                if not text:
+                    print("❌ No speech detected in audio")
+                    return None
+
+                print(f"✅ Transcribed text: {text}")
+                return text
 
         except Exception as e:
-            print(f"❌ Error preparing audio for transcription: {e}")
+            print(f"❌ Error transcribing audio: {e}")
             import traceback
             traceback.print_exc()
-            return ""
-        finally:
-            # Clean up temporary file
-            if temp_wav and os.path.exists(temp_wav):
-                try:
-                    os.remove(temp_wav)
-                except Exception as e:
-                    print(f"Warning: Could not remove temporary file {temp_wav}: {e}")
-                    pass
+            return None
 
     def perform_search(self, query, search_type="general"):
         """
@@ -1014,6 +1003,8 @@ class SimpleLocalAssistant:
                 voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
             elif self.language == "english":
                 voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
+            elif self.language == "german":  # Add German voice selection
+                voice = os.getenv("GERMAN_EDGE_TTS_VOICE", GERMAN_EDGE_TTS_VOICE)
             else:
                 voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
@@ -1023,7 +1014,10 @@ class SimpleLocalAssistant:
                 print(f"Switched TTS voice to: {self.edge_tts_voice}")
 
             # Create a temporary file for the audio
-            temp_file = "temp_tts.mp3"
+            # temp_file = "temp_tts.mp3"
+            # Create a temporary file with a unique name to avoid conflicts
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
+                temp_file = temp_audio.name
 
             # Create a new event loop for async operations
             loop = asyncio.new_event_loop()
