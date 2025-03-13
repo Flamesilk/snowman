@@ -1086,7 +1086,7 @@ class SimpleLocalAssistant:
         self.tts_fastest = min(self.tts_times) if self.tts_times else 0
         self.tts_slowest = max(self.tts_times) if self.tts_times else 0
 
-    def handle_conversation(self, initial_audio=None):
+    def handle_conversation(self):
         """Handle a complete conversation turn"""
         # Start a conversation loop
         in_conversation = True
@@ -1110,29 +1110,6 @@ class SimpleLocalAssistant:
             if not self.cobra_vad.is_monitoring:
                 print("Starting VAD monitoring for conversation...")
                 self.cobra_vad.start_monitoring()
-
-            # Process initial audio if provided
-            if initial_audio:
-                try:
-                    # Convert speech to text
-                    user_input = self.transcribe_audio(initial_audio)
-
-                    if user_input:
-                        print(f"🎤 You said: '{user_input}'")
-                        self.conversation_turns += 1
-                        last_activity_time = time.time()
-
-                        # Process the input and get AI response
-                        ai_response = self.get_ai_response(user_input)
-
-                        if ai_response:
-                            # Speak the response (timing is handled in speak_text)
-                            self.speak_text(ai_response)
-
-                            # Update last activity time after AI response
-                            last_activity_time = time.time()
-                except Exception as e:
-                    print(f"Error processing initial audio: {e}")
 
             # Continue with normal conversation loop
             while in_conversation and not self.should_exit:
