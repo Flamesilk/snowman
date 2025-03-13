@@ -34,6 +34,9 @@ from pvrecorder import PvRecorder
 from tavily import TavilyClient
 from cobra_vad import CobraVAD
 
+# Import prompts from the new module
+from .prompts import SYSTEM_PROMPT, DECISION_PROMPTS
+
 # Use faster-whisper for speech recognition
 from faster_whisper import WhisperModel
 
@@ -75,11 +78,13 @@ SOUND_EFFECTS = {
 PRE_RECORDED_MESSAGES = {
     "goodbye": {
         "english": "goodbye_en",
-        "chinese": "goodbye_zh"
+        "chinese": "goodbye_zh",
+        "others": "goodbye_en"
     },
     "not_understood": {
         "english": "not_understood_en",
-        "chinese": "not_understood_zh"
+        "chinese": "not_understood_zh",
+        "others": "not_understood_en"
     }
 }
 
@@ -90,8 +95,7 @@ ENABLE_SEARCH = True
 EDGE_TTS_VOICES = {
     "english": "en-US-AvaMultilingualNeural",
     "chinese": "zh-CN-XiaoxiaoNeural",
-    "german": "de-DE-KatjaNeural",  # Add German voice
-    "others": "en-US-AvaMultilingualNeural",  # For other languages
+    "others": "en-US-AvaMultilingualNeural",  # For languages other than English and Chinese
     # Add more languages as needed:
     # "japanese": "ja-JP-KeitaNeural",
     # "korean": "ko-KR-InJoonNeural",
@@ -102,7 +106,6 @@ EDGE_TTS_VOICES = {
 # Default voices
 ENGLISH_EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
 CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
-GERMAN_EDGE_TTS_VOICE = EDGE_TTS_VOICES["german"]  # Add German default voice
 OTHER_EDGE_TTS_VOICE = EDGE_TTS_VOICES["others"]
 
 # Wake word settings
@@ -115,27 +118,6 @@ CHINESE_END_CONVERSATION_PHRASES = [
     "再見", "拜拜", "結束對話", "謝謝", "謝謝你",
 ]
 LANGUAGE = "english"
-
-# System prompt for Gemini to generate concise responses
-SYSTEM_PROMPT = """
-You are a friendly and witty voice assistant. Please provide concise, direct answers optimized for text-to-speech conversion:
-
-1. Keep responses brief but engaging
-2. Use simple language and short sentences
-3. Avoid special characters, emojis, or symbols
-4. Don't use markdown formatting, code blocks, or technical syntax
-5. Don't include URLs or links
-6. Avoid parentheses, brackets, or other text decorations
-7. Write numbers as words for better speech synthesis
-8. Use natural, conversational language
-9. Limit response to 1-2 sentences when possible
-10. Be charming but not over-the-top silly
-
-Important: You should detect the language of the user's input and respond in the same language.
-For Chinese input, respond in Simplified Chinese.
-For English input, respond in English.
-For other languages, try to respond in the same language if possible, otherwise use English.
-"""
 
 class SimpleLocalAssistant:
     def __init__(self, debug=False):
@@ -315,8 +297,6 @@ class SimpleLocalAssistant:
                 self.edge_tts_voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
             elif self.language == "english":
                 self.edge_tts_voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
-            elif self.language == "german":  # Add German voice selection
-                self.edge_tts_voice = os.getenv("GERMAN_EDGE_TTS_VOICE", GERMAN_EDGE_TTS_VOICE)
             else:
                 self.edge_tts_voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
@@ -332,15 +312,12 @@ class SimpleLocalAssistant:
                 print(f"⚠️ Voice '{self.edge_tts_voice}' not found. Available voices for {self.language}:")
                 for voice in voices:
                     if (self.language == "chinese" and voice["Locale"].startswith("zh-")) or \
-                       (self.language == "english" and voice["Locale"].startswith("en-")) or \
-                       (self.language == "german" and voice["Locale"].startswith("de-")):
+                       (self.language == "english" and voice["Locale"].startswith("en-")):
                         print(f"  - {voice['ShortName']} ({voice['Locale']})")
 
                 # Set default fallback voice based on language
                 if self.language == "chinese":
                     self.edge_tts_voice = CHINESE_EDGE_TTS_VOICE
-                elif self.language == "german":  # Add German fallback voice
-                    self.edge_tts_voice = GERMAN_EDGE_TTS_VOICE
                 else:
                     self.edge_tts_voice = ENGLISH_EDGE_TTS_VOICE
                 print(f"Using fallback voice: {self.edge_tts_voice}")
@@ -669,17 +646,15 @@ class SimpleLocalAssistant:
 
                 # Update assistant language based on detected language
                 if lang_prob > 0.5:  # Only update if confidence is high enough
-                    if detected_lang == "de":
-                        self.language = "german"
-                        print("🇩🇪 Switching to German mode")
-                    elif detected_lang == "zh":
+                    if detected_lang == "zh":
                         self.language = "chinese"
                         print("🇨🇳 Switching to Chinese mode")
                     elif detected_lang == "en":
                         self.language = "english"
                         print("🇺🇸 Switching to English mode")
                     else:
-                        print(f"ℹ️ Detected language {detected_lang} will use fallback voice")
+                        self.language = "others"
+                        print(f"🌐 Using multilingual voice for {detected_lang}")
 
                 # Combine all segments into one text
                 text = " ".join([segment.text for segment in segments]).strip()
@@ -796,79 +771,14 @@ class SimpleLocalAssistant:
             print(f"🧠 Processing: '{user_input}'")
 
             # Combined decision and response prompt
-            decision_prompt = {
-                "english": f"""You must respond with a valid JSON object and nothing else.
-                Analyze this query: "{user_input}"
-
-                RESPOND WITH ONLY A JSON OBJECT IN THIS EXACT FORMAT:
-                {{
-                    "need_search": true/false,
-                    "response_text": "your response here",
-                    "reason": "your reason here"
-                }}
-
-                Rules:
-
-                1. Please make a careful decision about if search is needed based on the conversation history, and set need_search accordingly.
-                   - Set need_search=true only if the query clearly needs a search to answer.
-                   - Set need_search=false if the query is a general question that can be answered with the current knowledge, or the query is ambiguous and requires clarification.
-
-                2. For response_text:
-                   - If need_search=true: Write a brief acknowledgment
-                   - If need_search=false: Write the complete answer
-
-                3. Keep reason brief and clear
-
-                4. For search_query:
-                   - If need_search=true: Write the search query for Tavily, considering the conversation history, not just the current query.
-                   - If need_search=false: Do not include search_query
-
-                IMPORTANT:
-                - Use proper JSON formatting with double quotes
-                - Do not include any text outside the JSON object
-                - Do not include any markdown or formatting
-                - Do not include line breaks in strings""",
-
-                "chinese": f"""你必须只返回一个有效的JSON对象，不要包含任何其他内容。
-                分析这个问题："{user_input}"
-
-                只返回以下格式的JSON对象：
-                {{
-                    "need_search": true/false,
-                    "response_text": "你的回应",
-                    "reason": "原因说明",
-                    "search_query": "搜索查询"
-                }}
-
-                规则:
-
-                1. 结合对话历史，决定当前是否需要搜索，来设置 need_search
-                    - 如果的确需要搜索才能回答问题，设置 need_search=true。如果需要进一步澄清问题，设置 need_search=false
-                    - 如果不需要搜索，设置 need_search=false
-
-                2. response_text内容：
-                   - 如果need_search=true：写一个简短的确认信息
-                   - 如果need_search=false：写出完整答案
-
-                3. reason保持简短明确
-
-                4. search_query内容：
-                    - 如果need_search=true：写出搜索查询的问题，供Tavily搜索使用，考虑对话历史，不仅仅是当前查询。
-                    - 如果need_search=false：不要包含search_query
-
-                重要提示：
-                - 使用正确的JSON格式和双引号
-                - 不要在JSON对象外包含任何文本
-                - 不要包含任何markdown或格式化
-                - 字符串中不要包含换行符"""
-            }
+            decision_prompt = DECISION_PROMPTS[self.language].format(query=user_input)
 
             # Start timing here - just before the LLM call
             llm_start = time.time()
 
             # Get structured response from LLM
             response = self.chat_session.send_message(
-                decision_prompt[self.language],
+                decision_prompt,
                 stream=False
             )
 
@@ -1003,8 +913,6 @@ class SimpleLocalAssistant:
                 voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
             elif self.language == "english":
                 voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
-            elif self.language == "german":  # Add German voice selection
-                voice = os.getenv("GERMAN_EDGE_TTS_VOICE", GERMAN_EDGE_TTS_VOICE)
             else:
                 voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
