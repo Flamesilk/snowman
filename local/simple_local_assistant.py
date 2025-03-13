@@ -409,7 +409,7 @@ class SimpleLocalAssistant:
             sys.exit(1)
 
     def init_gemini(self):
-        """Initialize Google Gemini model"""
+        """Initialize Google Gemini model with family-friendly safety settings"""
         print("Initializing Gemini model...")
         try:
             if not self.google_api_key:
@@ -419,7 +419,27 @@ class SimpleLocalAssistant:
             # Configure the Gemini API
             genai.configure(api_key=self.google_api_key)
 
-            # Set up the model
+            # Set up safety settings for family-friendly content
+            safety_settings = [
+                {
+                    "category": "HARM_CATEGORY_HARASSMENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_HATE_SPEECH",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                },
+                {
+                    "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+                    "threshold": "BLOCK_MEDIUM_AND_ABOVE"
+                }
+            ]
+
+            # Set up the model configuration
             self.generation_config = {
                 "temperature": 0.7,
                 "top_p": 0.95,
@@ -427,13 +447,14 @@ class SimpleLocalAssistant:
                 "max_output_tokens": 1024,
             }
 
-            # Create the model
+            # Create the model with safety settings
             self.model = genai.GenerativeModel(
                 model_name="gemini-1.5-flash",
-                generation_config=self.generation_config
+                generation_config=self.generation_config,
+                safety_settings=safety_settings
             )
 
-            print("✅ Gemini Flash model initialized")
+            print("✅ Gemini Flash model initialized with family-friendly safety settings")
         except Exception as e:
             print(f"❌ Error initializing Gemini model: {e}")
             sys.exit(1)
