@@ -167,7 +167,6 @@ class SimpleLocalAssistant:
         self.init_edge_tts()
 
         # Initialize wake word detection
-        self.use_wake_word = True
         self.init_porcupine()
 
         # Initialize Gemini model
@@ -1293,30 +1292,18 @@ class SimpleLocalAssistant:
     def run(self):
         """Run the voice assistant"""
         try:
-            if self.use_wake_word:
+            try:
+                self.listen_for_wake_word()
+            except Exception as e:
+                print(f"❌ Error in wake word detection: {e}")
+                import traceback
+                traceback.print_exc()
+                print("Attempting to restart wake word detection...")
+                time.sleep(1)
                 try:
                     self.listen_for_wake_word()
-                except Exception as e:
-                    print(f"❌ Error in wake word detection: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    print("Attempting to restart wake word detection...")
-                    time.sleep(1)
-                    try:
-                        self.listen_for_wake_word()
-                    except:
-                        print("❌ Failed to restart wake word detection")
-            else:
-                print("Starting voice assistant in continuous mode (no wake word)...")
-                while not self.should_exit:
-                    try:
-                        self.handle_conversation()
-                    except Exception as e:
-                        print(f"❌ Error in conversation: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        print("Continuing to next conversation...")
-                        time.sleep(1)
+                except:
+                    print("❌ Failed to restart wake word detection")
         except KeyboardInterrupt:
             print("\nExiting voice assistant...")
         except Exception as e:
@@ -1329,7 +1316,7 @@ class SimpleLocalAssistant:
     def cleanup(self):
         """Clean up resources"""
         self.should_exit = True
-        if self.use_wake_word and hasattr(self, 'porcupine'):
+        if hasattr(self, 'porcupine'):
             self.porcupine.delete()
         if hasattr(self, 'cobra_vad'):
             self.cobra_vad.cleanup()
