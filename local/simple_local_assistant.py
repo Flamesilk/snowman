@@ -34,8 +34,8 @@ from pvrecorder import PvRecorder
 from tavily import TavilyClient
 from cobra_vad import CobraVAD
 
-# Import prompts from the new module
-from .prompts import SYSTEM_PROMPT, DECISION_PROMPTS
+# Import prompts from the prompts module (absolute import)
+from prompts import SYSTEM_PROMPT, CHAT_PROMPTS
 
 # Use faster-whisper for speech recognition
 from faster_whisper import WhisperModel
@@ -771,7 +771,7 @@ class SimpleLocalAssistant:
             print(f"🧠 Processing: '{user_input}'")
 
             # Combined decision and response prompt
-            decision_prompt = DECISION_PROMPTS[self.language].format(query=user_input)
+            decision_prompt = CHAT_PROMPTS[self.language].format(query=user_input)
 
             # Start timing here - just before the LLM call
             llm_start = time.time()
