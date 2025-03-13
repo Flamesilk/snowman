@@ -90,7 +90,7 @@ ENABLE_SEARCH = True
 EDGE_TTS_VOICES = {
     "english": "en-US-JennyNeural",
     "chinese": "zh-CN-XiaoxiaoNeural",
-    "others": "en-US-EmmaMultilingualNeural",
+    "others": "en-US-AvaMultilingualNeural",  # Changed to Ava Multilingual
     # Add more languages as needed:
     # "japanese": "ja-JP-KeitaNeural",
     # "korean": "ko-KR-InJoonNeural",
@@ -99,8 +99,9 @@ EDGE_TTS_VOICES = {
 }
 
 # Default voices
-EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
+ENGLISH_EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
 CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
+OTHER_EDGE_TTS_VOICE = EDGE_TTS_VOICES["others"]
 
 # Wake word settings
 DEFAULT_WAKE_KEYWORDS = ["computer", "alexa", "hey siri", "jarvis"]
@@ -310,8 +311,10 @@ class SimpleLocalAssistant:
             # Get voice from environment or use default based on language
             if self.language == "chinese":
                 self.edge_tts_voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
+            elif self.language == "english":
+                self.edge_tts_voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
             else:
-                self.edge_tts_voice = os.getenv("EDGE_TTS_VOICE", EDGE_TTS_VOICE)
+                self.edge_tts_voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
             # List available voices
             loop = asyncio.new_event_loop()
@@ -332,7 +335,7 @@ class SimpleLocalAssistant:
                 if self.language == "chinese":
                     self.edge_tts_voice = CHINESE_EDGE_TTS_VOICE
                 else:
-                    self.edge_tts_voice = EDGE_TTS_VOICE
+                    self.edge_tts_voice = ENGLISH_EDGE_TTS_VOICE
                 print(f"Using fallback voice: {self.edge_tts_voice}")
 
             print(f"✅ Edge TTS initialized with voice: {self.edge_tts_voice}")
@@ -676,6 +679,8 @@ class SimpleLocalAssistant:
                         self.language = "chinese"
                     elif detected_lang == "en":
                         self.language = "english"
+                    else:
+                        self.language = "others"
                     # For other languages, keep current setting but adapt the response
 
                 # Get the transcription text
@@ -1007,8 +1012,10 @@ class SimpleLocalAssistant:
             # Select voice based on current language
             if self.language == "chinese":
                 voice = os.getenv("CHINESE_EDGE_TTS_VOICE", CHINESE_EDGE_TTS_VOICE)
+            elif self.language == "english":
+                voice = os.getenv("ENGLISH_EDGE_TTS_VOICE", ENGLISH_EDGE_TTS_VOICE)
             else:
-                voice = os.getenv("EDGE_TTS_VOICE", EDGE_TTS_VOICE)
+                voice = os.getenv("OTHER_EDGE_TTS_VOICE", OTHER_EDGE_TTS_VOICE)
 
             # Update the voice if it changed
             if voice != self.edge_tts_voice:
