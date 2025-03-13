@@ -16,9 +16,9 @@ soundfile==0.12.1
 librosa==0.10.1
 
 # Wake word detection
-pvporcupine==3.0.5  # Picovoice Porcupine for wake word detection
-pvrecorder==1.2.5  # For recording audio with Porcupine
-pvcobra
+pvporcupine==3.0.5
+pvcobra==2.0.5
+pvrecorder==1.2.5
 
 # Search API
 tavily-python==0.5.1
