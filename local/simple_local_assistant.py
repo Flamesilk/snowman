@@ -785,8 +785,8 @@ class SimpleLocalAssistant:
                 Rules:
 
                 1. Please make a careful decision about if search is needed based on the conversation history, and set need_search accordingly.
-                   - Set need_search=true only if the query clearly needs a search to answer. If it needs a clarification from the user, set need_search=false.
-                   - Set need_search=false if the query is a general question that can be answered with the current knowledge.
+                   - Set need_search=true only if the query clearly needs a search to answer.
+                   - Set need_search=false if the query is a general question that can be answered with the current knowledge, or the query is ambiguous and requires clarification.
 
                 2. For response_text:
                    - If need_search=true: Write a brief acknowledgment
