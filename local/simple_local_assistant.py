@@ -945,8 +945,11 @@ class SimpleLocalAssistant:
             if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
                 self.cobra_vad.pause_monitoring()
 
-            # Speak the text
-            self.speak_text_edge(text)
+            # Speak the text and get timing
+            tts_time = self.speak_text_edge(text)
+            if tts_time is not None:
+                self.edge_tts_times.append(tts_time)
+
         finally:
             # Resume VAD monitoring after speaking
             if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
@@ -976,6 +979,9 @@ class SimpleLocalAssistant:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
+            # Start timing TTS generation
+            tts_start = time.time()
+
             # Function to generate speech with Edge TTS and save to file
             async def generate_speech():
                 communicate = edge_tts.Communicate(text, self.edge_tts_voice)
@@ -984,6 +990,9 @@ class SimpleLocalAssistant:
             # Generate speech and save to file
             loop.run_until_complete(generate_speech())
             loop.close()
+
+            # Calculate TTS generation time
+            tts_time = time.time() - tts_start
 
             # Try different methods to play the audio file
             played_successfully = False
@@ -1018,11 +1027,16 @@ class SimpleLocalAssistant:
                 pass
 
             self.is_speaking = False
+
+            # Return only the TTS generation time
+            return tts_time
+
         except Exception as e:
             print(f"❌ Error speaking text with Edge TTS: {e}")
             import traceback
             traceback.print_exc()
             self.is_speaking = False
+            return None
 
     def play_pre_recorded_message(self, message_type):
         """Play a pre-recorded message based on type and current language"""
@@ -1097,11 +1111,10 @@ class SimpleLocalAssistant:
                         self.gemini_times.append(gemini_time)
 
                         if ai_response:
-                            # Speak the response
-                            edge_tts_start = time.time()
+                            # Speak the response (timing is now handled in speak_text)
                             self.speak_text(ai_response)
-                            edge_tts_time = time.time() - edge_tts_start
-                            self.edge_tts_times.append(edge_tts_time)
+
+                            # Update last activity time after AI response
                             last_activity_time = time.time()
                 except Exception as e:
                     print(f"Error processing initial audio: {e}")
@@ -1182,11 +1195,8 @@ class SimpleLocalAssistant:
                         self.gemini_times.append(gemini_time)
 
                         if ai_response:
-                            # Speak the response
-                            edge_tts_start = time.time()
+                            # Speak the response (timing is now handled in speak_text)
                             self.speak_text(ai_response)
-                            edge_tts_time = time.time() - edge_tts_start
-                            self.edge_tts_times.append(edge_tts_time)
 
                             # Update last activity time after AI response
                             last_activity_time = time.time()
