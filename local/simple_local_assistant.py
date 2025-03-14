@@ -56,8 +56,8 @@ ENABLE_INTERRUPTION = False
 USE_EDGE_TTS = True
 
 # Timeout settings
-UTTERANCE_TIMEOUT = 15.0  # Maximum time to wait for a single utterance (in seconds)
-INACTIVITY_TIMEOUT = 15.0  # Time to wait for next user input before ending conversation (in seconds)
+UTTERANCE_TIMEOUT = 30.0  # Maximum time to wait for a single utterance (in seconds)
+INACTIVITY_TIMEOUT = 30.0  # Time to wait for next user input before ending conversation (in seconds)
 
 # VAD settings
 VAD_THRESHOLD = 0.7  # Voice probability threshold for Cobra VAD
@@ -148,7 +148,6 @@ class SimpleLocalAssistant:
         self.init_speech_recognition()
 
         # Initialize TTS
-        self.use_silero_tts = False
         self.init_edge_tts()
 
         # Initialize wake word detection
