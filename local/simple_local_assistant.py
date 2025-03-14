@@ -585,6 +585,7 @@ class SimpleLocalAssistant:
 
     def record_audio(self):
         """Record audio from microphone using Cobra VAD"""
+        print("\n" + "-"*50)
         print("🎤 Listening with Cobra VAD...")
 
         self.is_listening = True
@@ -629,6 +630,9 @@ class SimpleLocalAssistant:
         try:
             print("🎤 Transcribing audio...")
 
+            # Start timing STT
+            stt_start = time.time()
+
             # Create a temporary WAV file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
                 # Write WAV header and audio data
@@ -649,6 +653,11 @@ class SimpleLocalAssistant:
                     vad_filter=True,
                     vad_parameters=dict(min_silence_duration_ms=500)
                 )
+
+                # Calculate STT time and add to stats
+                stt_time = time.time() - stt_start
+                self.stt_times.append(stt_time)
+                print(f"🕒 STT took {stt_time:.2f} seconds")
 
                 # Clean up the temporary file
                 try:
@@ -808,12 +817,11 @@ class SimpleLocalAssistant:
 
             try:
                 # Print raw response in a pretty format
-                print("\n🔍 LLM Response:")
-                print("-"*50)
+                print("\n🔍 LLM Response:\n")
                 # Split the response into lines and print each line
                 for line in response.text.splitlines():
                     print(line)
-                print("-"*50 + "\n")
+                print()
 
                 # Clean up the response text to ensure valid JSON
                 response_text = response.text.strip()
@@ -1157,7 +1165,6 @@ class SimpleLocalAssistant:
                             last_activity_time = time.time()
 
                             print("👂 Continuing conversation... (say 'goodbye' to end)")
-                            print("\n" + "="*50 + "\n")
                         else:
                             # Fallback response if AI fails
                             if self.language == "chinese":
@@ -1207,12 +1214,12 @@ class SimpleLocalAssistant:
         print(f"Session duration: {self.session_duration:.2f} seconds")
         print(f"Total conversation turns: {self.conversation_turns}")
 
-        print("\nSpeech-to-Text (Whisper core transcription):")
+        print("\nSpeech-to-Text (faster-whisper transcription):")
         print(f"  Average time: {self.stt_avg_time:.2f} seconds")
         print(f"  Fastest: {self.stt_fastest:.2f}s")
         print(f"  Slowest: {self.stt_slowest:.2f}s")
 
-        print("\nLLM Response (Gemini core processing):")
+        print("\nLLM Response (Gemini response):")
         print(f"  Average time: {self.llm_avg_time:.2f} seconds")
         print(f"  Fastest: {self.llm_fastest:.2f}s")
         print(f"  Slowest: {self.llm_slowest:.2f}s")
