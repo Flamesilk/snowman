@@ -25,7 +25,6 @@ import numpy as np
 import google.generativeai as genai
 import asyncio
 import edge_tts
-import io
 import tempfile
 import subprocess
 from dotenv import load_dotenv
@@ -33,7 +32,6 @@ import pvporcupine
 from pvrecorder import PvRecorder
 from tavily import TavilyClient
 from cobra_vad import CobraVAD
-import pprint
 
 # Import prompts from the prompts module (absolute import)
 from prompts import SYSTEM_PROMPT, CHAT_PROMPTS
@@ -559,11 +557,9 @@ class SimpleLocalAssistant:
                         detected_word = self.keywords[keyword_index]
                         print(f"🎯 Wake word detected: '{detected_word}'!")
 
-                        # Start VAD monitoring before playing wake sound
+                        # Start VAD monitoring and play start_listening sound
                         self.cobra_vad.start_monitoring()
-
-                        # Play wake sound (shorter duration)
-                        self.play_sound_effect("wake")
+                        self.play_sound_effect("start_listening")
 
                         # Start conversation with Cobra VAD already monitoring
                         self.handle_conversation()
@@ -594,10 +590,11 @@ class SimpleLocalAssistant:
         self.is_listening = True
 
         try:
-            # Ensure VAD monitoring is started
+            # Ensure VAD monitoring is started and play sound
             if not self.cobra_vad.is_monitoring:
                 print("Starting VAD monitoring...")
                 self.cobra_vad.start_monitoring()
+                self.play_sound_effect("start_listening")
                 # Add a small delay after starting monitoring
                 time.sleep(0.2)
 
@@ -930,6 +927,7 @@ class SimpleLocalAssistant:
                 # Resume VAD monitoring after speaking
                 if self.cobra_vad.is_monitoring:
                     self.cobra_vad.resume_monitoring()
+                    self.play_sound_effect("start_listening")
 
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
@@ -1080,6 +1078,7 @@ class SimpleLocalAssistant:
             if not self.cobra_vad.is_monitoring:
                 print("Starting VAD monitoring for conversation...")
                 self.cobra_vad.start_monitoring()
+                self.play_sound_effect("start_listening")
 
             # Continue with normal conversation loop
             while in_conversation and not self.should_exit:
@@ -1098,7 +1097,7 @@ class SimpleLocalAssistant:
                     if not self.cobra_vad.is_monitoring:
                         print("Restarting VAD monitoring...")
                         self.cobra_vad.start_monitoring()
-
+                        self.play_sound_effect("start_listening")
                     # Record user's speech
                     audio_data = self.record_audio()
 
@@ -1144,7 +1143,7 @@ class SimpleLocalAssistant:
                         return
 
                     # Play sound before getting AI response
-                    self.play_sound_effect("pre_response")
+                    # self.play_sound_effect("pre_response")
 
                     # Get AI response
                     try:
