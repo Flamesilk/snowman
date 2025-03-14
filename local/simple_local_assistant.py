@@ -33,6 +33,7 @@ import pvporcupine
 from pvrecorder import PvRecorder
 from tavily import TavilyClient
 from cobra_vad import CobraVAD
+import pprint
 
 # Import prompts from the prompts module (absolute import)
 from prompts import SYSTEM_PROMPT, CHAT_PROMPTS
@@ -809,6 +810,11 @@ class SimpleLocalAssistant:
             print(f"🕒 LLM response took {llm_time:.2f} seconds")
 
             try:
+                print("\n🔍 LLM Response:")
+                print("-"*30)
+                pprint.pprint(response.text, indent=2)
+                print("-"*30 + "\n")
+
                 # Clean up the response text to ensure valid JSON
                 response_text = response.text.strip()
                 # Remove any potential markdown code block markers
@@ -1149,6 +1155,7 @@ class SimpleLocalAssistant:
                             last_activity_time = time.time()
 
                             print("👂 Continuing conversation... (say 'goodbye' to end)")
+                            print("\n" + "="*50 + "\n")
                         else:
                             # Fallback response if AI fails
                             if self.language == "chinese":
