@@ -810,10 +810,13 @@ class SimpleLocalAssistant:
             print(f"🕒 LLM response took {llm_time:.2f} seconds")
 
             try:
+                # Print raw response in a pretty format
                 print("\n🔍 LLM Response:")
-                print("-"*30)
-                pprint.pprint(response.text, indent=2)
-                print("-"*30 + "\n")
+                print("-"*50)
+                # Split the response into lines and print each line
+                for line in response.text.splitlines():
+                    print(line)
+                print("-"*50 + "\n")
 
                 # Clean up the response text to ensure valid JSON
                 response_text = response.text.strip()
