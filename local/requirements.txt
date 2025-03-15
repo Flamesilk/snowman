@@ -1,24 +1,18 @@
-# Core dependencies
 python-dotenv==1.0.0
-numpy==1.24.3
+
+# LLM
 google-generativeai==0.3.1
 
-# Speech recognition
+# Speech to text
 faster-whisper==1.1.1
-ctranslate2==4.3.1
 
-# Edge TTS
+# Text to speech
 edge-tts==6.1.9
 
-# Audio processing
-PyAudio==0.2.13
-soundfile==0.12.1
-librosa==0.10.1
-
-# Wake word detection
+# Wake word detection, VAD, and recording
 pvporcupine==3.0.5
 pvcobra==2.0.5
 pvrecorder==1.2.5
 
-# Search API
+# Web search
 tavily-python==0.5.1
