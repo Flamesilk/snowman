@@ -245,9 +245,8 @@ class SimpleLocalAssistant:
         print("Loading Whisper ASR model...")
         try:
             # Use base model for faster loading and less memory usage
-            model_size = "small"
-            # Force CPU mode and int8 quantization for Raspberry Pi
-            device = "cpu"
+            model_size = "tiny"
+            device = "auto"
             compute_type = "int8"
 
             print(f"Using faster-whisper {model_size} model on {device} with compute type {compute_type}")
@@ -259,8 +258,8 @@ class SimpleLocalAssistant:
                     model_size,
                     device=device,
                     compute_type=compute_type,
-                    cpu_threads=1,  # Reduced for Raspberry Pi
-                    num_workers=1,
+                    cpu_threads=2,  # Reduced for Raspberry Pi
+                    num_workers=2,
                     download_root="models",
                     local_files_only=True
                 )
@@ -271,8 +270,8 @@ class SimpleLocalAssistant:
                     model_size,
                     device=device,
                     compute_type=compute_type,
-                    cpu_threads=1,  # Reduced for Raspberry Pi
-                    num_workers=1,
+                    cpu_threads=2,  # Reduced for Raspberry Pi
+                    num_workers=2,
                     download_root="models",
                     local_files_only=False  # Allow downloading
                 )
@@ -519,18 +518,7 @@ class SimpleLocalAssistant:
             # For Raspberry Pi/Linux
             if sys.platform.startswith('linux'):
                 try:
-                    # Use the configured audio device
-                    alsa_device = f"hw:{self.audio_device_index},0" if self.audio_device_index >= 0 else "default"
-
-                    # Set maximum volume for the device
-                    try:
-                        subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception as e:
-                        print(f"⚠️ Could not set volume: {e}")
-
-                    # Play WAV file with aplay
-                    cmd = ["aplay", "-D", alsa_device, sound_path]
+                    cmd = ["aplay", sound_path]
                     if blocking:
                         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     else:
@@ -541,7 +529,7 @@ class SimpleLocalAssistant:
                     print(f"⚠️ ALSA playback failed: {e}")
                     # Try mpg123 as fallback
                     try:
-                        cmd = ["mpg123", "-a", alsa_device, "-q", sound_path]
+                        cmd = ["mpg123", "-q", sound_path]
                         if blocking:
                             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         else:
