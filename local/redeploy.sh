@@ -60,6 +60,28 @@ echo "📂 Creating project directory on Pi (if it doesn't exist)..."
 run_on_pi "mkdir -p $PROJECT_DIR"
 run_on_pi "mkdir -p $PROJECT_DIR/sounds"
 
+echo "🔊 Setting up ALSA configuration..."
+run_on_pi "sudo usermod -a -G audio $PI_USER"
+run_on_pi "sudo usermod -a -G pulse-access $PI_USER"
+
+# Create ALSA configuration
+run_on_pi "sudo tee /etc/asound.conf << 'EOL'
+pcm.!default {
+    type asym
+    playback.pcm {
+        type plug
+        slave.pcm \"hw:0,0\"
+    }
+    capture.pcm {
+        type plug
+        slave.pcm \"hw:0,0\"
+    }
+}
+EOL"
+
+# Set audio device permissions
+run_on_pi "sudo chmod 666 /dev/snd/*"
+
 echo "📦 Copying project files..."
 # Create temporary directory for files
 TEMP_DIR=$(mktemp -d)
@@ -112,6 +134,14 @@ copy_to_pi "$TEMP_DIR/sounds/" "$PROJECT_DIR/"  # Copy only WAV files
 if [ -f "$TEMP_DIR/.env" ]; then
     copy_to_pi "$TEMP_DIR/.env" "$PROJECT_DIR/"
 fi
+
+# Copy service file
+echo "🔧 Copying service file..."
+copy_to_pi "local/voice-assistant.service" "/etc/systemd/system/"
+
+# Set permissions and reload systemd
+echo "🔄 Setting up service..."
+run_on_pi "sudo chmod 644 /etc/systemd/system/voice-assistant.service && sudo systemctl daemon-reload && sudo systemctl enable voice-assistant.service"
 
 # Cleanup temporary directory
 rm -rf "$TEMP_DIR"

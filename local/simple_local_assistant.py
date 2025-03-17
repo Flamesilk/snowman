@@ -59,7 +59,7 @@ UTTERANCE_TIMEOUT = 30.0  # Maximum time to wait for a single utterance (in seco
 INACTIVITY_TIMEOUT = 30.0  # Time to wait for next user input before ending conversation (in seconds)
 
 # VAD settings
-VAD_THRESHOLD = 0.7  # Voice probability threshold for Cobra VAD
+VAD_THRESHOLD = 0.6  # Voice probability threshold for Cobra VAD
 
 # Sound effect paths
 SOUND_EFFECTS = {
@@ -705,7 +705,7 @@ class SimpleLocalAssistant:
                     language=None,
                     task="transcribe",
                     vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=500)
+                    vad_parameters=dict(min_silence_duration_ms=1000)
                 )
 
                 # Calculate STT time and add to stats

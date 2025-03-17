@@ -8,6 +8,7 @@ import numpy as np
 import wave
 import time
 import subprocess
+import sounddevice as sd
 
 def set_alsa_volume():
     """Try different methods to set the volume"""
@@ -188,5 +189,31 @@ def test_mic():
     except Exception as e:
         print(f"Error: {e}")
 
+def list_audio_devices():
+    print("\nAvailable audio devices:")
+    print(sd.query_devices())
+
+def test_audio():
+    print("\nTesting audio setup...")
+    try:
+        # List all devices
+        list_audio_devices()
+
+        # Try to open default input device
+        print("\nTrying to open default input device...")
+        with sd.InputStream(samplerate=16000, channels=1) as stream:
+            print("Successfully opened input device")
+
+        # Try to open default output device
+        print("\nTrying to open default output device...")
+        with sd.OutputStream(samplerate=16000, channels=1) as stream:
+            print("Successfully opened output device")
+
+        print("\n✅ Audio setup test passed!")
+
+    except Exception as e:
+        print(f"\n❌ Audio setup test failed: {str(e)}")
+        raise
+
 if __name__ == "__main__":
-    test_mic()
+    test_audio()
