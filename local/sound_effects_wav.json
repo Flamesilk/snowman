@@ -1,0 +1,12 @@
+{
+    "wake": "sounds/wake.wav",
+    "start_listening": "sounds/start_listening.wav",
+    "wake_chime": "sounds/wake_chime.wav",
+    "transcribe_done": "sounds/transcribe_done.wav",
+    "goodbye_zh": "sounds/goodbye_zh.wav",
+    "not_understood_zh": "sounds/not_understood_zh.wav",
+    "pre_response": "sounds/pre_response.wav",
+    "start_transcribe": "sounds/start_transcribe.wav",
+    "goodbye_en": "sounds/goodbye_en.wav",
+    "not_understood_en": "sounds/not_understood_en.wav"
+}

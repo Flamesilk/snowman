@@ -77,7 +77,7 @@ You can customize the following in the `.env` file:
 ### Required Configuration
 - `DAILY_ROOM_URL`: Your Daily.co room URL
 - `GOOGLE_API_KEY`: Your Google API key for Gemini
-- `PORCUPINE_ACCESS_KEY`: Your Picovoice Porcupine access key (for wake word detection)
+- `PICOVOICE_ACCESS_KEY`: Your Picovoice Porcupine access key (for wake word detection)
 
 ### Speech Recognition Options
 - By default, the assistant uses Silero (local, no API key needed)

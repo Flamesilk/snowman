@@ -217,7 +217,7 @@ To run the voice assistant:
 2. Edit the .env file with your API keys for:
    - Daily.co (DAILY_API_KEY and DAILY_ROOM_URL)
    - Google Gemini (GOOGLE_API_KEY)
-   - Picovoice Porcupine (PORCUPINE_ACCESS_KEY)
+   - Picovoice Porcupine (PICOVOICE_ACCESS_KEY)
 
 3. Choose one of the following scripts to run:
 

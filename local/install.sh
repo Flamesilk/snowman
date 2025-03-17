@@ -206,10 +206,27 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
     wget \
     curl \
     mpg123 \
-    alsa-utils
+    alsa-utils \
+    ffmpeg \
+    libavcodec-extra \
+    libportaudio2 \
+    portaudio19-dev
 
 # Configure audio
 sudo usermod -a -G audio $USER
+
+# Test audio setup
+echo "🔊 Testing audio configuration..."
+# List audio devices
+echo "Audio playback devices:"
+aplay -l || true
+echo "Audio recording devices:"
+arecord -l || true
+
+# Try to set default volume
+echo "Setting default audio volume..."
+amixer sset 'PCM' 100% || true
+amixer sset 'Master' 100% || true
 
 echo "🐍 Setting up Python environment..."
 python3 -m venv $PROJECT_DIR/venv
@@ -234,7 +251,7 @@ else
     read -p "Enter your Google API Key: " google_key
     read -p "Enter your Tavily API Key (or press enter to skip): " tavily_key
 
-    echo "PORCUPINE_ACCESS_KEY=$porcupine_key" > $PROJECT_DIR/.env
+    echo "PICOVOICE_ACCESS_KEY=$porcupine_key" > $PROJECT_DIR/.env
     echo "GOOGLE_API_KEY=$google_key" >> $PROJECT_DIR/.env
     [ ! -z "$tavily_key" ] && echo "TAVILY_API_KEY=$tavily_key" >> $PROJECT_DIR/.env
     chmod 600 $PROJECT_DIR/.env

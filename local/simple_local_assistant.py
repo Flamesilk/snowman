@@ -63,14 +63,14 @@ VAD_THRESHOLD = 0.7  # Voice probability threshold for Cobra VAD
 
 # Sound effect paths
 SOUND_EFFECTS = {
-    "wake": "sounds/wake_chime.m4a",  # Shorter wake sound
-    "start_listening": "sounds/start_listening.m4a",  # Sound played when starting to listen
-    "start_transcribe": "sounds/start_transcribe.mp3",  # Sound played before starting transcription
-    "pre_response": "sounds/pre_response.mp3",  # Sound played before getting AI response
-    "goodbye_en": "sounds/goodbye_en.m4a",  # English goodbye message
-    "goodbye_zh": "sounds/goodbye_zh.m4a",  # Chinese goodbye message
-    "not_understood_en": "sounds/not_understood_en.m4a",  # English not understood message
-    "not_understood_zh": "sounds/not_understood_zh.m4a",  # Chinese not understood message
+    "wake": "sounds/wake_chime.wav",  # Shorter wake sound
+    "start_listening": "sounds/start_listening.wav",  # Sound played when starting to listen
+    "start_transcribe": "sounds/start_transcribe.wav",  # Sound played before starting transcription
+    "pre_response": "sounds/pre_response.wav",  # Sound played before getting AI response
+    "goodbye_en": "sounds/goodbye_en.wav",  # English goodbye message
+    "goodbye_zh": "sounds/goodbye_zh.wav",  # Chinese goodbye message
+    "not_understood_en": "sounds/not_understood_en.wav",  # English not understood message
+    "not_understood_zh": "sounds/not_understood_zh.wav",  # Chinese not understood message
 }
 
 # Pre-recorded messages mapping
@@ -95,11 +95,6 @@ EDGE_TTS_VOICES = {
     "english": "en-US-AvaMultilingualNeural",
     "chinese": "zh-CN-XiaoxiaoNeural",
     "others": "en-US-AvaMultilingualNeural",  # For languages other than English and Chinese
-    # Add more languages as needed:
-    # "japanese": "ja-JP-KeitaNeural",
-    # "korean": "ko-KR-InJoonNeural",
-    # "spanish": "es-ES-AlvaroNeural",
-    # "french": "fr-FR-HenriNeural",
 }
 
 # Default voices
@@ -180,9 +175,9 @@ class SimpleLocalAssistant:
         """Initialize Cobra VAD for speech detection"""
         try:
             # Get access key from environment
-            access_key = os.getenv("PORCUPINE_ACCESS_KEY")
+            access_key = os.getenv("PICOVOICE_ACCESS_KEY")
             if not access_key:
-                print("❌ PORCUPINE_ACCESS_KEY is required in .env file for Cobra VAD")
+                print("❌ PICOVOICE_ACCESS_KEY is required in .env file for Cobra VAD")
                 sys.exit(1)
 
             # Create Cobra VAD instance
@@ -203,7 +198,8 @@ class SimpleLocalAssistant:
 
         recorder = None
         try:
-            recorder = PvRecorder(device_index=-1, frame_length=FRAME_LENGTH)
+            recorder = PvRecorder(device_index=self.audio_device_index, frame_length=FRAME_LENGTH)
+            print(f"Using audio device: {recorder.selected_device}")
             recorder.start()
 
             # Collect ambient noise samples
@@ -248,9 +244,9 @@ class SimpleLocalAssistant:
         """Initialize Whisper speech recognition model for both English and Chinese"""
         print("Loading Whisper ASR model...")
         try:
-            # Use small model for better accuracy while maintaining reasonable performance
-            model_size = "small"
-            # Use CPU for better stability
+            # Use tiny model for faster loading and less memory usage
+            model_size = "tiny"  # Changed from "base" to "tiny" for Raspberry Pi
+            # Force CPU mode and int8 quantization for Raspberry Pi
             device = "cpu"
             compute_type = "int8"
 
@@ -263,7 +259,7 @@ class SimpleLocalAssistant:
                     model_size,
                     device=device,
                     compute_type=compute_type,
-                    cpu_threads=2,
+                    cpu_threads=1,  # Reduced for Raspberry Pi
                     num_workers=1,
                     download_root="models",
                     local_files_only=True
@@ -275,7 +271,7 @@ class SimpleLocalAssistant:
                     model_size,
                     device=device,
                     compute_type=compute_type,
-                    cpu_threads=2,
+                    cpu_threads=1,  # Reduced for Raspberry Pi
                     num_workers=1,
                     download_root="models",
                     local_files_only=False  # Allow downloading
@@ -327,10 +323,19 @@ class SimpleLocalAssistant:
 
     def init_porcupine(self):
         """Initialize Porcupine wake word detection"""
-        access_key = os.getenv("PORCUPINE_ACCESS_KEY")
+        access_key = os.getenv("PICOVOICE_ACCESS_KEY")
         if not access_key:
-            print("❌ PORCUPINE_ACCESS_KEY is required in .env file for wake word detection")
+            print("❌ PICOVOICE_ACCESS_KEY is required in .env file for wake word detection")
             sys.exit(1)
+
+        # Get audio device index from environment
+        try:
+            self.audio_device_index = int(os.getenv("AUDIO_DEVICE_INDEX", -1))
+            if DEBUG_AUDIO:
+                print(f"Using audio device index {self.audio_device_index} from environment")
+        except ValueError:
+            print("⚠️ Invalid AUDIO_DEVICE_INDEX in environment, using default")
+            self.audio_device_index = -1
 
         # Check for custom wake word file
         custom_keyword_path = os.getenv("CUSTOM_KEYWORD_PATH")
@@ -511,28 +516,89 @@ class SimpleLocalAssistant:
             return
 
         try:
-            if sys.platform == "darwin":  # macOS
-                if blocking:
-                    subprocess.run(["afplay", sound_path], check=True)
-                else:
-                    subprocess.Popen(["afplay", sound_path])
+            # For Raspberry Pi/Linux
+            if sys.platform.startswith('linux'):
+                try:
+                    # Use the configured audio device
+                    alsa_device = f"hw:{self.audio_device_index},0" if self.audio_device_index >= 0 else "default"
+
+                    # Set maximum volume for the device
+                    try:
+                        subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception as e:
+                        print(f"⚠️ Could not set volume: {e}")
+
+                    # Play WAV file with aplay
+                    cmd = ["aplay", "-D", alsa_device, sound_path]
+                    if blocking:
+                        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+
+                except Exception as e:
+                    print(f"⚠️ ALSA playback failed: {e}")
+                    # Try mpg123 as fallback
+                    try:
+                        cmd = ["mpg123", "-a", alsa_device, "-q", sound_path]
+                        if blocking:
+                            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        else:
+                            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        return
+                    except Exception as e2:
+                        print(f"⚠️ mpg123 playback failed: {e2}")
+
+            # Platform-specific playback methods (keep existing code for other platforms)
+            elif sys.platform == "darwin":  # macOS
+                try:
+                    if blocking:
+                        subprocess.run(["afplay", sound_path], check=True)
+                    else:
+                        subprocess.Popen(["afplay", sound_path])
+                    return
+                except Exception as e:
+                    print(f"⚠️ macOS audio playback failed: {e}")
+
             elif sys.platform == "win32":  # Windows
-                if blocking:
-                    subprocess.run(["start", sound_path], shell=True, check=True)
-                else:
-                    subprocess.Popen(["start", sound_path], shell=True)
-            elif sys.platform.startswith("linux"):  # Linux
-                for player in ["mpg123", "mpg321", "mplayer", "play"]:
+                try:
+                    if blocking:
+                        subprocess.run(["wmplayer", sound_path, "/close"], check=True)
+                    else:
+                        subprocess.Popen(["wmplayer", sound_path, "/close"])
+                    return
+                except Exception as e:
+                    print(f"⚠️ Windows Media Player failed: {e}")
                     try:
                         if blocking:
-                            subprocess.run([player, sound_path], check=True)
+                            subprocess.run(["start", sound_path], shell=True, check=True)
                         else:
-                            subprocess.Popen([player, sound_path])
-                        break
-                    except (subprocess.SubprocessError, FileNotFoundError):
-                        continue
+                            subprocess.Popen(["start", sound_path], shell=True)
+                        return
+                    except Exception as e2:
+                        print(f"⚠️ Windows shell playback failed: {e2}")
+
+            # Fallback methods for all platforms
+            print("⚠️ Trying fallback audio players...")
+            for player in ["aplay", "mpg123", "mpg321", "mplayer", "ffplay"]:
+                try:
+                    if blocking:
+                        subprocess.run([player, sound_path], check=True,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    else:
+                        subprocess.Popen([player, sound_path],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return
+                except (subprocess.SubprocessError, FileNotFoundError):
+                    continue
+
+            print(f"⚠️ All playback methods failed for: {sound_path}")
+
         except Exception as e:
             print(f"⚠️ Error playing sound effect: {e}")
+            import traceback
+            traceback.print_exc()
 
     def listen_for_wake_word(self):
         """Listen for wake word using Porcupine and capture any following speech"""
@@ -541,7 +607,7 @@ class SimpleLocalAssistant:
         recorder = None
         try:
             # Initialize recorder with frame length 512 (works for both wake word and speech)
-            recorder = PvRecorder(device_index=-1, frame_length=self.porcupine.frame_length)
+            recorder = PvRecorder(device_index=self.audio_device_index, frame_length=self.porcupine.frame_length)
             recorder.start()
 
             print(f"Using audio device: {recorder.selected_device}")
@@ -956,9 +1022,7 @@ class SimpleLocalAssistant:
                 self.edge_tts_voice = voice
                 print(f"Switched TTS voice to: {self.edge_tts_voice}")
 
-            # Create a temporary file for the audio
-            # temp_file = "temp_tts.mp3"
-            # Create a temporary file with a unique name to avoid conflicts
+            # Create a temporary file with a unique name
             with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as temp_audio:
                 temp_file = temp_audio.name
 
@@ -981,27 +1045,86 @@ class SimpleLocalAssistant:
             # Calculate TTS generation time
             tts_time = time.time() - tts_start
 
-            # Try different methods to play the audio file
+            # Try different methods to play the audio file based on platform
             played_successfully = False
 
-            # Method 1: Use system player (most reliable)
-            try:
-                if sys.platform == "darwin":  # macOS
+            # Platform-specific playback methods
+            if sys.platform == "darwin":  # macOS
+                try:
                     subprocess.run(["afplay", temp_file], check=True)
                     played_successfully = True
-                elif sys.platform == "win32":  # Windows
-                    subprocess.run(["start", temp_file], shell=True, check=True)
+                except Exception as e:
+                    print(f"⚠️ macOS audio playback failed: {e}")
+
+            elif sys.platform == "win32":  # Windows
+                try:
+                    os.startfile(temp_file)  # Native Windows audio playback
+                    time.sleep(0.1)  # Small delay to ensure playback starts
                     played_successfully = True
-                elif sys.platform.startswith("linux"):  # Linux
-                    for player in ["mpg123", "mpg321", "mplayer", "play"]:
+                except Exception as e:
+                    print(f"⚠️ Windows audio playback failed: {e}")
+                    try:
+                        # Fallback to Windows Media Player CLI
+                        subprocess.run(["wmplayer", temp_file], check=True)
+                        played_successfully = True
+                    except Exception as e2:
+                        print(f"⚠️ Windows Media Player fallback failed: {e2}")
+
+            elif sys.platform.startswith("linux"):  # Linux/Raspberry Pi
+                # For Raspberry Pi, try ALSA first
+                try:
+                    # Use the configured audio device
+                    alsa_device = f"hw:{self.audio_device_index},0" if self.audio_device_index >= 0 else "default"
+
+                    # Try to set maximum volume for the device
+                    try:
+                        subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    except Exception as e:
+                        print(f"⚠️ Could not set volume: {e}")
+
+                    # Try mpg123 with specific ALSA device first (since Edge TTS outputs MP3)
+                    try:
+                        cmd = ["mpg123", "-a", alsa_device, "-q", temp_file]
+                        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        played_successfully = True
+                    except Exception as e:
+                        print(f"⚠️ mpg123 playback failed: {e}")
+
+                        # If mpg123 fails, try converting to WAV and using aplay
                         try:
-                            subprocess.run([player, temp_file], check=True)
+                            # Convert MP3 to WAV using ffmpeg
+                            wav_file = temp_file.replace('.mp3', '.wav')
+                            subprocess.run(["ffmpeg", "-i", temp_file, "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", wav_file],
+                                         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+                            # Play WAV with aplay
+                            subprocess.run(["aplay", "-D", alsa_device, wav_file],
+                                         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                             played_successfully = True
-                            break
-                        except (subprocess.SubprocessError, FileNotFoundError):
-                            continue
-            except Exception as e:
-                print(f"System audio player error: {e}")
+
+                            # Clean up WAV file
+                            try:
+                                os.remove(wav_file)
+                            except:
+                                pass
+                        except Exception as e2:
+                            print(f"⚠️ WAV conversion and aplay failed: {e2}")
+
+                except Exception as e:
+                    print(f"⚠️ ALSA playback failed: {e}")
+
+            # If platform-specific methods failed, try generic fallbacks
+            if not played_successfully:
+                print("⚠️ Trying fallback audio players...")
+                for player in ["mpg123", "mpg321", "mplayer", "ffplay"]:
+                    try:
+                        subprocess.run([player, temp_file], check=True,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        played_successfully = True
+                        break
+                    except (subprocess.SubprocessError, FileNotFoundError):
+                        continue
 
             # Method 2: Last resort - print the text if audio failed
             if not played_successfully:

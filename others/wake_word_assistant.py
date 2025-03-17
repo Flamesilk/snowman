@@ -64,7 +64,7 @@ class WakeWordAssistant:
         """Initialize the voice assistant."""
         # Validate required environment variables
         required_vars = [
-            "DAILY_ROOM_URL", "GOOGLE_API_KEY", "PORCUPINE_ACCESS_KEY"
+            "DAILY_ROOM_URL", "GOOGLE_API_KEY", "PICOVOICE_ACCESS_KEY"
         ]
 
         missing_vars = [var for var in required_vars if not os.getenv(var)]
@@ -74,7 +74,7 @@ class WakeWordAssistant:
         # Get configuration from environment
         self.daily_room_url = os.getenv("DAILY_ROOM_URL")
         self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        self.porcupine_access_key = os.getenv("PORCUPINE_ACCESS_KEY")
+        self.porcupine_access_key = os.getenv("PICOVOICE_ACCESS_KEY")
         self.wake_keywords = os.getenv("WAKE_KEYWORDS", "hey_assistant,computer").split(",")
 
         # Speech and TTS configuration

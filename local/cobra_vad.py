@@ -35,24 +35,49 @@ class CobraVAD:
     using Picovoice Cobra, which is more accurate than simple volume thresholds.
     """
 
-    def __init__(self, access_key=None, threshold=DEFAULT_THRESHOLD, debug=False):
+    def __init__(self, access_key=None, threshold=DEFAULT_THRESHOLD, debug=False, device_index=None):
         """
         Initialize the Cobra VAD
 
         Args:
-            access_key (str): Picovoice access key (can be loaded from env var PORCUPINE_ACCESS_KEY)
+            access_key (str): Picovoice access key (can be loaded from env var PICOVOICE_ACCESS_KEY)
             threshold (float): Voice probability threshold (0.0 to 1.0)
             debug (bool): Whether to print debug information
+            device_index (int, optional): Audio device index to use (can be loaded from env var AUDIO_DEVICE_INDEX)
         """
         # Get access key from environment if not provided
         if access_key is None:
-            access_key = os.getenv("PORCUPINE_ACCESS_KEY")
+            access_key = os.getenv("PICOVOICE_ACCESS_KEY")
             if not access_key:
-                raise ValueError("Picovoice access key is required. Set PORCUPINE_ACCESS_KEY environment variable or pass access_key parameter.")
+                raise ValueError("Picovoice access key is required. Set PICOVOICE_ACCESS_KEY environment variable or pass access_key parameter.")
+
+        # List available audio devices
+        devices = PvRecorder.get_available_devices()
+        print("\n🎤 Available audio devices:")
+        for i, device in enumerate(devices):
+            print(f"[{i}] {device}")
+
+        # Get audio device index
+        if device_index is None:
+            try:
+                env_device_index = os.getenv("AUDIO_DEVICE_INDEX")
+                if env_device_index is not None:
+                    device_index = int(env_device_index)
+                    if device_index >= 0 and device_index < len(devices):
+                        print(f"\n📌 Using audio device index {device_index} from environment: {devices[device_index]}")
+                    elif device_index == -1:
+                        print(f"\n📌 Using system default audio device")
+                    else:
+                        print(f"\n⚠️ Warning: Invalid AUDIO_DEVICE_INDEX in environment: {device_index}")
+                        device_index = -1
+            except (ValueError, IndexError) as e:
+                print(f"\n⚠️ Warning: Invalid AUDIO_DEVICE_INDEX in environment: {e}")
+                device_index = -1
 
         self.access_key = access_key
         self.threshold = threshold
         self.debug = debug
+        self.device_index = device_index
 
         # Initialize Cobra
         self.cobra = pvcobra.create(access_key=self.access_key)
@@ -83,11 +108,17 @@ class CobraVAD:
         self.pause_event = Event()  # Add pause event
 
         if self.debug:
-            print(f"Cobra VAD initialized with threshold: {self.threshold}")
-            print(f"Frame length: {FRAME_LENGTH}")
-            print(f"Pre-buffer size: {self.pre_buffer_size} frames ({BUFFER_PADDING} seconds)")
-            print(f"Minimum voice duration: {MIN_VOICE_DURATION} seconds ({self.min_voice_frames} frames)")
-            print(f"Silence duration for end: {SILENCE_DURATION} seconds")
+            print(f"\n🔧 Cobra VAD Configuration:")
+            print(f"- Threshold: {self.threshold}")
+            print(f"- Frame length: {FRAME_LENGTH}")
+            print(f"- Pre-buffer size: {self.pre_buffer_size} frames ({BUFFER_PADDING} seconds)")
+            print(f"- Minimum voice duration: {MIN_VOICE_DURATION} seconds ({self.min_voice_frames} frames)")
+            print(f"- Silence duration for end: {SILENCE_DURATION} seconds")
+            print(f"- Selected device index: {self.device_index}")
+            if self.device_index >= 0 and self.device_index < len(devices):
+                print(f"- Selected device: {devices[self.device_index]}")
+            else:
+                print("- Using system default audio device")
 
     def pause_monitoring(self):
         """Temporarily pause voice monitoring"""
@@ -103,12 +134,11 @@ class CobraVAD:
             if self.debug:
                 print("Resumed voice monitoring")
 
-    def start_monitoring(self, device_index=-1):
+    def start_monitoring(self):
         """
         Start continuous monitoring for voice activity
 
         Args:
-            device_index (int): Audio device index to use (-1 for default)
 
         Returns:
             bool: True if monitoring started successfully
@@ -122,7 +152,7 @@ class CobraVAD:
         self.is_monitoring = True
 
         # Start monitoring thread
-        self.monitor_thread = Thread(target=self._monitor_thread, args=(device_index,))
+        self.monitor_thread = Thread(target=self._monitor_thread, args=(self.device_index,))
         self.monitor_thread.daemon = True
         self.monitor_thread.start()
 
