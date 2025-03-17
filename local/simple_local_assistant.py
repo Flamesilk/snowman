@@ -244,8 +244,8 @@ class SimpleLocalAssistant:
         """Initialize Whisper speech recognition model for both English and Chinese"""
         print("Loading Whisper ASR model...")
         try:
-            # Use tiny model for faster loading and less memory usage
-            model_size = "tiny"  # Changed from "base" to "tiny" for Raspberry Pi
+            # Use base model for faster loading and less memory usage
+            model_size = "small"
             # Force CPU mode and int8 quantization for Raspberry Pi
             device = "cpu"
             compute_type = "int8"
