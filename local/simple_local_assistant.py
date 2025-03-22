@@ -245,7 +245,7 @@ class SimpleLocalAssistant:
         print("Loading Whisper ASR model...")
         try:
             # Use base model for faster loading and less memory usage
-            model_size = "tiny"
+            model_size = "small" #"tiny"
             device = "auto"
             compute_type = "int8"
 
@@ -762,7 +762,7 @@ class SimpleLocalAssistant:
             raise Exception("Tavily client not initialized")
 
         if self.language == 'chinese':
-            query += " (提供简明扼要的回答，适合口语交流)"
+            query += " (用中文提供简明扼要的回答，适合口语交流)"
         else:
             query += " (provide a concise answer, suitable for casual conversation)"
 
@@ -782,7 +782,7 @@ class SimpleLocalAssistant:
                     "include_raw_content": False,
                     "include_images": False,
                     "max_results": 3,
-                    "language": 'zh' if self.language == 'chinese' else 'en'
+                    "language": 'zh_CN' if self.language == 'chinese' else 'en'
                 }
 
                 # For news searches, we can also specify the time range
@@ -798,6 +798,7 @@ class SimpleLocalAssistant:
 
                 # Extract and format the results
                 if results.get("answer"):
+                    print(f"🔍 Tavily answer: {results['answer']}")
                     return results["answer"]
                 else:
                     formatted_results = []
@@ -811,9 +812,10 @@ class SimpleLocalAssistant:
                             formatted_results.append(f"{title}: {snippet}")
 
                     if self.language == "chinese":
-                        formatted_answer = f"以下是关于'{query}'的搜索结果：\n" + "\n".join(formatted_results)
+                        formatted_answer = f"以下是搜索结果：\n" + "\n".join(formatted_results)
                     else:
-                        formatted_answer = f"Here are the search results for '{query}':\n" + "\n".join(formatted_results)
+                        formatted_answer = f"Here are the search results:\n" + "\n".join(formatted_results)
+                    print(f"🔍 Formatted results: {formatted_answer}")
 
                     return formatted_answer[:500]  # Limit response length
 
@@ -917,7 +919,7 @@ class SimpleLocalAssistant:
                     if search_error:
                         raise search_error
 
-                    print(f"🔍 Search results: {search_results}")
+                    # print(f"🔍 Search results: {search_results}")
 
                     if search_results:
                         # Return search results directly without processing
