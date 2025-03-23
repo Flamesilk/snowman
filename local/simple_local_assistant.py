@@ -684,7 +684,6 @@ class SimpleLocalAssistant:
         try:
             print("🎤 Transcribing audio...")
 
-            # Start timing STT
             stt_start = time.time()
 
             # Create a temporary WAV file
@@ -710,8 +709,8 @@ class SimpleLocalAssistant:
 
                 # Calculate STT time and add to stats
                 stt_time = time.time() - stt_start
-                self.stt_times.append(stt_time)
-                print(f"🕒 STT took {stt_time:.2f} seconds")
+                if hasattr(self, 'stt_times'):
+                    self.stt_times.append(stt_time)
 
                 # Clean up the temporary file
                 try:
@@ -722,20 +721,19 @@ class SimpleLocalAssistant:
                 # Get the detected language and its probability
                 detected_lang = info.language
                 lang_prob = info.language_probability
-
-                print(f"🔍 Detected language: {detected_lang} (probability: {lang_prob:.2f})")
+                # print(f"🔍 Detected language: {detected_lang} (probability: {lang_prob:.2f})")
 
                 # Update assistant language based on detected language
                 if lang_prob > 0.5:  # Only update if confidence is high enough
                     if detected_lang == "zh":
                         self.language = "chinese"
-                        print("🇨🇳 Switching to Chinese mode")
+                        lang_symbol = "🇨🇳"
                     elif detected_lang == "en":
                         self.language = "english"
-                        print("🇺🇸 Switching to English mode")
+                        lang_symbol = "🇺🇸"
                     else:
                         self.language = "others"
-                        print(f"🌐 Using multilingual voice for {detected_lang}")
+                        lang_symbol = "🌐"
 
                 # Combine all segments into one text
                 text = " ".join([segment.text for segment in segments]).strip()
@@ -744,7 +742,7 @@ class SimpleLocalAssistant:
                     print("❌ No speech detected in audio")
                     return None
 
-                print(f"✅ Transcribed text: {text}")
+                print(f"🎤 Transcribed text ({stt_time:.2f} seconds, {lang_symbol}): {text}")
                 return text
 
         except Exception as e:
@@ -856,7 +854,6 @@ class SimpleLocalAssistant:
             # Combined decision and response prompt
             decision_prompt = CHAT_PROMPTS[self.language].format(query=user_input)
 
-            # Start timing here - just before the LLM call
             llm_start = time.time()
 
             # Get structured response from LLM
@@ -865,15 +862,13 @@ class SimpleLocalAssistant:
                 stream=False
             )
 
-            # End timing here - right after the LLM call
             llm_time = time.time() - llm_start
             if hasattr(self, 'llm_times'):
                 self.llm_times.append(llm_time)
-            print(f"🕒 LLM response took {llm_time:.2f} seconds")
 
             try:
                 # Print raw response in a pretty format
-                print("\n🔍 LLM Response:\n")
+                print(f"\n🔍 LLM Response ({llm_time:.2f} seconds):\n")
                 # Split the response into lines and print each line
                 for line in response.text.splitlines():
                     print(line)
@@ -1239,7 +1234,6 @@ class SimpleLocalAssistant:
                         self.play_pre_recorded_message("not_understood")
                         continue
 
-                    print(f"🎤 You said: '{user_input}'")
                     self.conversation_turns += 1
 
                     # Check if the user wants to end the conversation
