@@ -32,6 +32,7 @@ import pvporcupine
 from pvrecorder import PvRecorder
 from tavily import TavilyClient
 from cobra_vad import CobraVAD
+from audio_monitor import AudioMonitor, SAMPLE_RATE, FRAME_LENGTH
 
 # Import prompts from the prompts module (absolute import)
 from prompts import SYSTEM_PROMPT, CHAT_PROMPTS
@@ -40,14 +41,6 @@ from prompts import SYSTEM_PROMPT, CHAT_PROMPTS
 from faster_whisper import WhisperModel
 
 # Constants
-SAMPLE_RATE = 16000
-CHANNELS = 1
-FRAME_LENGTH = 512
-SILENCE_THRESHOLD = 0.025
-SILENCE_DURATION = 1.5
-INITIAL_SILENCE_DURATION = 0.4  # Shorter silence duration for initial question after wake word
-INTERRUPTION_THRESHOLD = 0.1
-INTERRUPTION_MIN_CHUNKS = 3
 DEBUG_AUDIO = True
 USE_FIXED_THRESHOLDS = True
 USE_MANUAL_RECORDING = False
@@ -57,9 +50,6 @@ USE_EDGE_TTS = True
 # Timeout settings
 UTTERANCE_TIMEOUT = 30.0  # Maximum time to wait for a single utterance (in seconds)
 INACTIVITY_TIMEOUT = 30.0  # Time to wait for next user input before ending conversation (in seconds)
-
-# VAD settings
-VAD_THRESHOLD = 0.6  # Voice probability threshold for Cobra VAD
 
 # Sound effect paths
 SOUND_EFFECTS = {
@@ -102,8 +92,7 @@ ENGLISH_EDGE_TTS_VOICE = EDGE_TTS_VOICES["english"]
 CHINESE_EDGE_TTS_VOICE = EDGE_TTS_VOICES["chinese"]
 OTHER_EDGE_TTS_VOICE = EDGE_TTS_VOICES["others"]
 
-# Wake word settings
-DEFAULT_WAKE_KEYWORDS = ["computer", "alexa", "hey siri", "jarvis"]
+# End conversation phrases
 END_CONVERSATION_PHRASES = ["goodbye", "bye", "end conversation", "stop listening", "thank you", "thanks"]
 CHINESE_END_CONVERSATION_PHRASES = [
     # Simplified Chinese
@@ -135,17 +124,14 @@ class SimpleLocalAssistant:
             print("❌ GOOGLE_API_KEY is required in .env file")
             sys.exit(1)
 
-        # Initialize Cobra VAD
-        self.init_cobra_vad()
+        # Initialize audio monitor (combines VAD and wake word detection)
+        self.audio_monitor = AudioMonitor(debug=DEBUG_AUDIO)
 
         # Initialize speech recognition
         self.init_speech_recognition()
 
         # Initialize TTS
         self.init_edge_tts()
-
-        # Initialize wake word detection
-        self.init_porcupine()
 
         # Initialize Gemini model
         self.init_gemini()
@@ -168,77 +154,10 @@ class SimpleLocalAssistant:
         self.is_speaking = False
         self.should_exit = False
         self.audio_queue = queue.Queue()
+        self.interrupted = False  # New flag for tracking interruption state
+        self.playback_process = None  # Store the playback process for interruption
 
         print("✅ Voice assistant initialized and ready")
-
-    def init_cobra_vad(self):
-        """Initialize Cobra VAD for speech detection"""
-        try:
-            # Get access key from environment
-            access_key = os.getenv("PICOVOICE_ACCESS_KEY")
-            if not access_key:
-                print("❌ PICOVOICE_ACCESS_KEY is required in .env file for Cobra VAD")
-                sys.exit(1)
-
-            # Create Cobra VAD instance
-            self.cobra_vad = CobraVAD(
-                access_key=access_key,
-                threshold=VAD_THRESHOLD,
-                debug=DEBUG_AUDIO
-            )
-
-            print(f"✅ Cobra VAD initialized with threshold: {VAD_THRESHOLD}")
-        except Exception as e:
-            print(f"❌ Error initializing Cobra VAD: {e}")
-            sys.exit(1)
-
-    def calibrate_microphone(self):
-        """Measure ambient noise and calibrate thresholds using PvRecorder"""
-        print("🎙️ Calibrating microphone (please be quiet)...")
-
-        recorder = None
-        try:
-            recorder = PvRecorder(device_index=self.audio_device_index, frame_length=FRAME_LENGTH)
-            print(f"Using audio device: {recorder.selected_device}")
-            recorder.start()
-
-            # Collect ambient noise samples
-            ambient_levels = []
-            calibration_time = 2  # seconds
-            samples_to_collect = int(calibration_time * SAMPLE_RATE / FRAME_LENGTH)
-
-            for _ in range(samples_to_collect):
-                try:
-                    pcm = recorder.read()
-                    audio_data = np.array(pcm, dtype=np.int16)
-                    volume_norm = np.abs(audio_data).mean() / 32768.0
-                    ambient_levels.append(volume_norm)
-                except Exception as e:
-                    print(f"Error during calibration: {e}")
-
-        finally:
-            if recorder is not None:
-                recorder.stop()
-                recorder.delete()
-
-        # Calculate thresholds based on ambient noise
-        if ambient_levels:
-            avg_ambient = sum(ambient_levels) / len(ambient_levels)
-            max_ambient = max(ambient_levels)
-
-            # Set thresholds relative to ambient noise
-            silence_threshold = max(avg_ambient * 1.2, 0.003)
-            interruption_threshold = max(max_ambient * 2, 0.01)
-
-            print(f"Ambient noise level: {avg_ambient:.4f}")
-            print(f"Silence threshold set to: {silence_threshold:.4f}")
-            print(f"Interruption threshold set to: {interruption_threshold:.4f}")
-
-            return silence_threshold, interruption_threshold
-        else:
-            # Fallback to default values
-            print("⚠️ Calibration failed, using default thresholds")
-            return SILENCE_THRESHOLD, INTERRUPTION_THRESHOLD
 
     def init_speech_recognition(self):
         """Initialize Whisper speech recognition model for both English and Chinese"""
@@ -320,96 +239,6 @@ class SimpleLocalAssistant:
             print(f"❌ Error initializing Edge TTS: {e}")
             sys.exit(1)
 
-    def init_porcupine(self):
-        """Initialize Porcupine wake word detection"""
-        access_key = os.getenv("PICOVOICE_ACCESS_KEY")
-        if not access_key:
-            print("❌ PICOVOICE_ACCESS_KEY is required in .env file for wake word detection")
-            sys.exit(1)
-
-        # Get audio device index from environment
-        try:
-            self.audio_device_index = int(os.getenv("AUDIO_DEVICE_INDEX", -1))
-            if DEBUG_AUDIO:
-                print(f"Using audio device index {self.audio_device_index} from environment")
-        except ValueError:
-            print("⚠️ Invalid AUDIO_DEVICE_INDEX in environment, using default")
-            self.audio_device_index = -1
-
-        # Check for custom wake word file
-        custom_keyword_path = os.getenv("CUSTOM_KEYWORD_PATH")
-        if custom_keyword_path and os.path.exists(custom_keyword_path):
-            print(f"🔍 Using custom wake word from: {custom_keyword_path}")
-            try:
-                self.porcupine = pvporcupine.create(
-                    access_key=access_key,
-                    keyword_paths=[custom_keyword_path]
-                )
-                self.keywords = ["hey snowman"]  # For display purposes
-                print(f"✅ Porcupine initialized with custom wake word: {self.keywords[0]}")
-                print(f"Sample rate: {self.porcupine.sample_rate}")
-                print(f"Frame length: {self.porcupine.frame_length}")
-                return
-            except Exception as e:
-                print(f"❌ Failed to initialize Porcupine with custom wake word: {str(e)}")
-                print("Falling back to default keywords...")
-
-        # If no custom wake word or failed to load it, use default keywords
-        wake_keywords_str = os.getenv("WAKE_KEYWORDS", ",".join(DEFAULT_WAKE_KEYWORDS))
-        requested_keywords = [kw.strip() for kw in wake_keywords_str.split(",")]
-        print(f"Requested wake words: {requested_keywords}")
-
-        # Filter to only use available default keywords
-        available_keywords = [
-            "picovoice", "ok google", "hey google", "hey barista", "terminator",
-            "americano", "grasshopper", "porcupine", "pico clock", "grapefruit",
-            "bumblebee", "computer", "alexa", "hey siri", "jarvis", "blueberry"
-        ]
-
-        # Find keywords that are both requested and available
-        self.keywords = [kw for kw in requested_keywords if kw.lower() in [k.lower() for k in available_keywords]]
-        print(f"Valid wake words found: {self.keywords}")
-
-        # If no valid keywords, use default ones
-        if not self.keywords:
-            print(f"⚠️ No valid wake keywords found in '{wake_keywords_str}'. Using defaults: {DEFAULT_WAKE_KEYWORDS}")
-            self.keywords = DEFAULT_WAKE_KEYWORDS
-
-        print(f"🔍 Attempting to initialize Porcupine with keywords: {self.keywords}")
-        try:
-            self.porcupine = pvporcupine.create(
-                access_key=access_key,
-                keywords=self.keywords
-            )
-            print(f"✅ Porcupine initialized with wake words: {', '.join(self.keywords)}")
-            print(f"Sample rate: {self.porcupine.sample_rate}")
-            print(f"Frame length: {self.porcupine.frame_length}")
-        except Exception as e:
-            print(f"❌ Failed to initialize Porcupine: {str(e)}")
-            print("\nAvailable default keywords are:")
-            for kw in available_keywords:
-                print(f"  - {kw}")
-            print("\nPlease:")
-            print("1. Verify your access key at https://console.picovoice.ai/")
-            print("2. Make sure you're using keywords from the list above")
-            print("3. Check that there are no spaces after commas in WAKE_KEYWORDS")
-            sys.exit(1)
-
-    def init_chat_session(self):
-        """Initialize a new chat session with the system prompt"""
-        try:
-            # Create a new chat session with the language-aware system prompt
-            self.chat_session = self.model.start_chat(
-                history=[
-                    {"role": "user", "parts": [SYSTEM_PROMPT]},
-                    {"role": "model", "parts": ["I'll keep my responses concise and adapt to the user's language."]}
-                ]
-            )
-            print("🔄 Started new chat session with language adaptation")
-        except Exception as e:
-            print(f"❌ Error initializing chat session: {e}")
-            sys.exit(1)
-
     def init_gemini(self):
         """Initialize Google Gemini model with family-friendly safety settings"""
         print("Initializing Gemini model...")
@@ -459,6 +288,21 @@ class SimpleLocalAssistant:
             print("✅ Gemini Flash model initialized with family-friendly safety settings")
         except Exception as e:
             print(f"❌ Error initializing Gemini model: {e}")
+            sys.exit(1)
+
+    def init_chat_session(self):
+        """Initialize chat session with Gemini"""
+        try:
+            # Create a new chat session with system prompt
+            self.chat_session = self.model.start_chat(
+                history=[
+                    {"role": "user", "parts": [SYSTEM_PROMPT]},
+                    {"role": "model", "parts": ["Understood. I am ready to assist you."]}
+                ]
+            )
+            print("✅ Chat session initialized with system prompt")
+        except Exception as e:
+            print(f"❌ Error initializing chat session: {e}")
             sys.exit(1)
 
     def init_search_apis(self):
@@ -589,43 +433,41 @@ class SimpleLocalAssistant:
             traceback.print_exc()
 
     def listen_for_wake_word(self):
-        """Listen for wake word using Porcupine and capture any following speech"""
+        """Listen for wake word using AudioMonitor"""
         print("👂 Listening for wake word...")
 
-        recorder = None
         try:
-            # Initialize recorder with frame length 512 (works for both wake word and speech)
-            recorder = PvRecorder(device_index=self.audio_device_index, frame_length=self.porcupine.frame_length)
-            recorder.start()
-
-            print(f"Using audio device: {recorder.selected_device}")
-            print(f"Wake word frame length: {self.porcupine.frame_length}")
-
             while not self.should_exit:
+                # Ensure monitoring is started
+                if not self.audio_monitor.is_monitoring:
+                    print("Starting audio monitoring for wake word detection...")
+                    self.audio_monitor.start_monitoring()
+
                 try:
-                    pcm = recorder.read()
+                    # Wait for wake word detection
+                    wake_word = self.audio_monitor.get_next_wake_word()
+                    if wake_word:
+                        print(f"🎯 Wake word detected: '{wake_word}'!")
 
-                    # Process for wake word detection
-                    keyword_index = self.porcupine.process(pcm)
-                    if keyword_index >= 0:
-                        detected_word = self.keywords[keyword_index]
-                        print(f"🎯 Wake word detected: '{detected_word}'!")
-
-                        # Start VAD monitoring and play start_listening sound
-                        self.cobra_vad.start_monitoring()
-                        self.play_sound_effect("start_listening")
-
-                        # Start conversation with Cobra VAD already monitoring
+                        # Start conversation
                         self.handle_conversation()
 
-                        # After conversation, go back to listening for wake word
-                        print("👂 Listening for wake word...")
+                        # After conversation, restart monitoring and go back to listening for wake word
+                        if not self.should_exit:
+                            print("Starting audio monitoring for wake word detection...")
+                            self.audio_monitor.start_monitoring()
+                            print("👂 Listening for wake word...")
 
                 except Exception as e:
                     print(f"Error processing audio: {e}")
                     import traceback
                     traceback.print_exc()
-                    break
+                    # Try to restart monitoring
+                    if not self.should_exit:
+                        print("Attempting to restart audio monitoring...")
+                        self.audio_monitor.stop_monitoring()
+                        time.sleep(1)
+                        self.audio_monitor.start_monitoring()
 
         except Exception as e:
             print(f"Error in wake word detection: {e}")
@@ -633,31 +475,29 @@ class SimpleLocalAssistant:
             traceback.print_exc()
 
         finally:
-            if recorder is not None:
-                recorder.stop()
-                recorder.delete()
+            self.audio_monitor.stop_monitoring()
 
     def record_audio(self):
-        """Record audio from microphone using Cobra VAD"""
+        """Record audio from microphone using AudioMonitor"""
         print("\n" + "-"*50)
-        print("🎤 Listening with Cobra VAD...")
+        print("🎤 Listening with VAD...")
 
         self.is_listening = True
 
         try:
-            # Ensure VAD monitoring is started and play sound
-            if not self.cobra_vad.is_monitoring:
-                print("Starting VAD monitoring...")
-                self.cobra_vad.start_monitoring()
+            # Ensure monitoring is started and play sound
+            if not self.audio_monitor.is_monitoring:
+                print("Starting audio monitoring...")
+                self.audio_monitor.start_monitoring()
                 self.play_sound_effect("start_listening")
                 # Add a small delay after starting monitoring
                 time.sleep(0.2)
 
             # Clear any residual audio before starting new recording
-            self.cobra_vad.clear_audio_buffer()
+            self.audio_monitor.clear_audio_buffer()
 
             # Get the next speech segment with timeout
-            audio_data = self.cobra_vad.get_next_audio(timeout=UTTERANCE_TIMEOUT)
+            audio_data = self.audio_monitor.get_next_audio(timeout=UTTERANCE_TIMEOUT)
 
             # Print recording stats
             if audio_data:
@@ -669,10 +509,9 @@ class SimpleLocalAssistant:
             return audio_data or b''
 
         except Exception as e:
-            print(f"❌ Error recording audio with Cobra VAD: {e}")
+            print(f"❌ Error recording audio: {e}")
             return b''
         finally:
-            # Don't stop monitoring here - let the conversation handler manage the VAD state
             self.is_listening = False
 
     def transcribe_audio(self, audio_data):
@@ -851,8 +690,11 @@ class SimpleLocalAssistant:
         try:
             print(f"🧠 Processing: '{user_input}'")
 
+            # Use English prompts for any language other than Chinese
+            prompt_language = "chinese" if self.language == "chinese" else "english"
+
             # Combined decision and response prompt
-            decision_prompt = CHAT_PROMPTS[self.language].format(query=user_input)
+            decision_prompt = CHAT_PROMPTS[prompt_language].format(query=user_input)
 
             llm_start = time.time()
 
@@ -892,7 +734,6 @@ class SimpleLocalAssistant:
                 print(f"🤔 Decision: need_search={result['need_search']}, reason={result['reason']}")
 
                 # If search is needed, start it immediately
-                search_results = None
                 if ENABLE_SEARCH and result['need_search']:
                     print("🔍 Starting web search...")
 
@@ -914,11 +755,10 @@ class SimpleLocalAssistant:
                     if search_error:
                         raise search_error
 
-                    # print(f"🔍 Search results: {search_results}")
-
                     if search_results:
-                        # Return search results directly without processing
-                        return search_results
+                        # Speak the search results immediately
+                        self.speak_text(search_results)
+                        return None  # Return None to indicate we've already spoken the response
                     else:
                         # Fallback if search failed
                         if self.language == "chinese":
@@ -970,9 +810,9 @@ class SimpleLocalAssistant:
     def speak_text(self, text):
         """Convert text to speech and play it"""
         try:
-            # Pause VAD monitoring while speaking
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
-                self.cobra_vad.pause_monitoring()
+            # Pause monitoring while speaking
+            if self.audio_monitor.is_monitoring:
+                self.audio_monitor.pause_monitoring()
 
             # Speak the text and get timing
             tts_time = self.speak_text_edge(text)
@@ -981,18 +821,18 @@ class SimpleLocalAssistant:
 
         finally:
             # Clear any audio that might have accumulated during speaking
-            if hasattr(self, 'cobra_vad'):
-                self.cobra_vad.clear_audio_buffer()
-                # Resume VAD monitoring after speaking
-                if self.cobra_vad.is_monitoring:
-                    self.cobra_vad.resume_monitoring()
-                    self.play_sound_effect("start_listening")
+            self.audio_monitor.clear_audio_buffer()
+            # Resume monitoring after speaking
+            if self.audio_monitor.is_monitoring:
+                self.audio_monitor.resume_monitoring()
+                self.play_sound_effect("start_listening")
 
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
         try:
             print(f"🔊 Speaking: '{text}'")
             self.is_speaking = True
+            self.interrupted = False  # Reset interruption flag
 
             # Select voice based on current language
             if self.language == "chinese":
@@ -1030,48 +870,83 @@ class SimpleLocalAssistant:
             # Calculate TTS generation time
             tts_time = time.time() - tts_start
 
+            # Resume monitoring to detect wake words during playback
+            # But keep VAD paused to avoid processing voice activity
+            if self.audio_monitor.is_monitoring:
+                self.audio_monitor.resume_monitoring()
+
             # Try different methods to play the audio file based on platform
             played_successfully = False
 
             # Platform-specific playback methods
             if sys.platform == "darwin":  # macOS
                 try:
-                    subprocess.run(["afplay", temp_file], check=True)
+                    self.playback_process = subprocess.Popen(["afplay", temp_file])
+                    while self.playback_process.poll() is None and not self.interrupted:
+                        # Check for wake word while playing
+                        wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                        if wake_word:
+                            print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                            self.interrupted = True
+                            self.playback_process.terminate()
+                            break
                     played_successfully = True
                 except Exception as e:
                     print(f"⚠️ macOS audio playback failed: {e}")
 
             elif sys.platform == "win32":  # Windows
                 try:
-                    os.startfile(temp_file)  # Native Windows audio playback
-                    time.sleep(0.1)  # Small delay to ensure playback starts
+                    self.playback_process = subprocess.Popen(["wmplayer", temp_file, "/close"])
+                    while self.playback_process.poll() is None and not self.interrupted:
+                        wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                        if wake_word:
+                            print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                            self.interrupted = True
+                            self.playback_process.terminate()
+                            break
                     played_successfully = True
                 except Exception as e:
-                    print(f"⚠️ Windows audio playback failed: {e}")
+                    print(f"⚠️ Windows Media Player failed: {e}")
                     try:
-                        # Fallback to Windows Media Player CLI
-                        subprocess.run(["wmplayer", temp_file], check=True)
+                        self.playback_process = subprocess.Popen(["start", temp_file], shell=True)
+                        while self.playback_process.poll() is None and not self.interrupted:
+                            wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                            if wake_word:
+                                print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                                self.interrupted = True
+                                self.playback_process.terminate()
+                                break
                         played_successfully = True
                     except Exception as e2:
-                        print(f"⚠️ Windows Media Player fallback failed: {e2}")
+                        print(f"⚠️ Windows shell playback failed: {e2}")
 
             elif sys.platform.startswith("linux"):  # Linux/Raspberry Pi
                 # For Raspberry Pi, try ALSA first
                 try:
                     # Use the configured audio device
-                    alsa_device = f"hw:{self.audio_device_index},0" if self.audio_device_index >= 0 else "default"
+                    alsa_device = f"hw:{self.audio_monitor.device_index},0" if self.audio_monitor.device_index >= 0 else "default"
 
                     # Try to set maximum volume for the device
                     try:
-                        subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
+                        subprocess.run(["amixer", "-c", str(max(0, self.audio_monitor.device_index)), "sset", "PCM", "100%"],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     except Exception as e:
                         print(f"⚠️ Could not set volume: {e}")
 
                     # Try mpg123 with specific ALSA device first (since Edge TTS outputs MP3)
                     try:
-                        cmd = ["mpg123", "-a", alsa_device, "-q", temp_file]
-                        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.playback_process = subprocess.Popen(
+                            ["mpg123", "-a", alsa_device, "-q", temp_file],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        while self.playback_process.poll() is None and not self.interrupted:
+                            wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                            if wake_word:
+                                print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                                self.interrupted = True
+                                self.playback_process.terminate()
+                                break
                         played_successfully = True
                     except Exception as e:
                         print(f"⚠️ mpg123 playback failed: {e}")
@@ -1084,8 +959,18 @@ class SimpleLocalAssistant:
                                          check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
                             # Play WAV with aplay
-                            subprocess.run(["aplay", "-D", alsa_device, wav_file],
-                                         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            self.playback_process = subprocess.Popen(
+                                ["aplay", "-D", alsa_device, wav_file],
+                                stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL
+                            )
+                            while self.playback_process.poll() is None and not self.interrupted:
+                                wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                                if wake_word:
+                                    print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                                    self.interrupted = True
+                                    self.playback_process.terminate()
+                                    break
                             played_successfully = True
 
                             # Clean up WAV file
@@ -1104,16 +989,22 @@ class SimpleLocalAssistant:
                 print("⚠️ Trying fallback audio players...")
                 for player in ["mpg123", "mpg321", "mplayer", "ffplay"]:
                     try:
-                        subprocess.run([player, temp_file], check=True,
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        self.playback_process = subprocess.Popen(
+                            [player, temp_file],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL
+                        )
+                        while self.playback_process.poll() is None and not self.interrupted:
+                            wake_word = self.audio_monitor.get_next_wake_word(timeout=0.1)
+                            if wake_word:
+                                print(f"\n🎯 Wake word detected during playback: '{wake_word}'!")
+                                self.interrupted = True
+                                self.playback_process.terminate()
+                                break
                         played_successfully = True
                         break
                     except (subprocess.SubprocessError, FileNotFoundError):
                         continue
-
-            # Method 2: Last resort - print the text if audio failed
-            if not played_successfully:
-                print(f"⚠️ Audio playback failed. Text response: {text}")
 
             # Clean up the temporary file
             try:
@@ -1122,6 +1013,7 @@ class SimpleLocalAssistant:
                 pass
 
             self.is_speaking = False
+            self.playback_process = None
 
             # Return only the TTS generation time
             return tts_time
@@ -1131,14 +1023,15 @@ class SimpleLocalAssistant:
             import traceback
             traceback.print_exc()
             self.is_speaking = False
+            self.playback_process = None
             return None
 
     def play_pre_recorded_message(self, message_type):
         """Play a pre-recorded message based on type and current language"""
         try:
-            # Pause VAD monitoring while playing message
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
-                self.cobra_vad.pause_monitoring()
+            # Pause monitoring while playing message
+            if self.audio_monitor.is_monitoring:
+                self.audio_monitor.pause_monitoring()
 
             if message_type in PRE_RECORDED_MESSAGES:
                 sound_effect = PRE_RECORDED_MESSAGES[message_type][self.language]
@@ -1147,9 +1040,9 @@ class SimpleLocalAssistant:
             else:
                 print(f"⚠️ No pre-recorded message found for: {message_type}")
         finally:
-            # Resume VAD monitoring after message is fully played
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
-                self.cobra_vad.resume_monitoring()
+            # Resume monitoring after message is fully played
+            if self.audio_monitor.is_monitoring:
+                self.audio_monitor.resume_monitoring()
 
     def calculate_session_stats(self):
         """Calculate session statistics"""
@@ -1190,10 +1083,10 @@ class SimpleLocalAssistant:
         last_activity_time = time.time()
 
         try:
-            # Start VAD monitoring at the beginning of conversation
-            if not self.cobra_vad.is_monitoring:
-                print("Starting VAD monitoring for conversation...")
-                self.cobra_vad.start_monitoring()
+            # Start audio monitoring at the beginning of conversation
+            if not self.audio_monitor.is_monitoring:
+                print("Starting audio monitoring for conversation...")
+                self.audio_monitor.start_monitoring()
                 self.play_sound_effect("start_listening")
 
             # Continue with normal conversation loop
@@ -1209,11 +1102,12 @@ class SimpleLocalAssistant:
                         self.print_session_stats()
                         return
 
-                    # Ensure VAD is monitoring before recording
-                    if not self.cobra_vad.is_monitoring:
-                        print("Restarting VAD monitoring...")
-                        self.cobra_vad.start_monitoring()
+                    # Ensure monitoring is started before recording
+                    if not self.audio_monitor.is_monitoring:
+                        print("Restarting audio monitoring...")
+                        self.audio_monitor.start_monitoring()
                         self.play_sound_effect("start_listening")
+
                     # Record user's speech
                     audio_data = self.record_audio()
 
@@ -1309,10 +1203,10 @@ class SimpleLocalAssistant:
                         in_conversation = False
 
         finally:
-            # Stop VAD monitoring when conversation ends
-            if self.cobra_vad.is_monitoring:
-                print("Stopping VAD monitoring at end of conversation...")
-                self.cobra_vad.stop_monitoring()
+            # Stop audio monitoring when conversation ends
+            if self.audio_monitor.is_monitoring:
+                print("Stopping audio monitoring at end of conversation...")
+                self.audio_monitor.stop_monitoring()
 
     def print_session_stats(self):
         """Print session statistics"""
@@ -1377,12 +1271,10 @@ class SimpleLocalAssistant:
     def cleanup(self):
         """Clean up resources"""
         self.should_exit = True
-        if hasattr(self, 'porcupine'):
-            self.porcupine.delete()
-        if hasattr(self, 'cobra_vad'):
-            self.cobra_vad.cleanup()
-        if hasattr(self, 'audio'):
-            self.audio.terminate()
+        if hasattr(self, 'audio_monitor'):
+            self.audio_monitor.cleanup()
+        if hasattr(self, 'whisper_model'):
+            del self.whisper_model
         print("✅ Voice assistant resources cleaned up")
 
 def main():

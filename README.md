@@ -1,6 +1,10 @@
-# Simple Local Voice Assistant
+# Snowman
 
-A lightweight, privacy-focused voice assistant that runs primarily locally on your machine. This project demonstrates how to build a capable voice assistant with minimal cloud dependencies, leveraging state-of-the-art open-source models and libraries.
+A modern voice assistant that combines state-of-the-art AI models with efficient local processing for a seamless conversational experience. Snowman demonstrates how to build a capable voice assistant by leveraging the best of both worlds: local processing for speed-critical components and cloud APIs for intelligent responses.
+
+## Motivation
+
+Since the AI revolution began, I've been waiting for smart speakers to deliver truly intelligent conversations - but they've consistently fallen short of expectations. What I really wanted was simple: a portable device that sits at my dining table where family and friends can casually throw questions at it and get thoughtful, real-time answers without reaching for phones or typing queries. Snowman is built to be that knowledgeable companion, making AI-powered conversations as natural as talking to someone at the table.
 
 ## Features
 

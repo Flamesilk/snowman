@@ -8,7 +8,7 @@ set -x
 PI_HOST=""
 PI_USER=""
 PI_PORT="22"
-PROJECT_DIR="~/voice-assistant"
+PROJECT_DIR="~/snowman"
 ENV_FILE="local/.env"
 
 # Print usage
@@ -94,7 +94,7 @@ cat > "$TEMP_DIR/remote_install.sh" << 'EOL'
 set -e
 set -x
 
-PROJECT_DIR="$HOME/voice-assistant"
+PROJECT_DIR="$HOME/snowman"
 
 # Function to wait for apt locks to be released
 wait_for_apt() {
@@ -259,12 +259,12 @@ fi
 
 # Create and verify systemd service file
 echo "🔧 Setting up systemd service..."
-SERVICE_FILE="/etc/systemd/system/voice-assistant.service"
+SERVICE_FILE="/etc/systemd/system/snowman-voice-assistant.service"
 
 # Create systemd service file
 sudo tee $SERVICE_FILE << EOFS
 [Unit]
-Description=Voice Assistant Service
+Description=Snowman Voice Assistant Service
 After=network.target pulseaudio.service
 
 [Service]
@@ -298,22 +298,22 @@ sudo chmod 644 "$SERVICE_FILE"
 # Reload systemd and enable service
 echo "🔄 Reloading systemd and enabling service..."
 sudo systemctl daemon-reload
-sudo systemctl enable voice-assistant.service
+sudo systemctl enable snowman-voice-assistant.service
 
 # Verify service is enabled
-if ! systemctl is-enabled voice-assistant.service >/dev/null 2>&1; then
+if ! systemctl is-enabled snowman-voice-assistant.service >/dev/null 2>&1; then
     echo "❌ Failed to enable voice-assistant service!"
     exit 1
 fi
 
 # Start the service
 echo "🚀 Starting voice assistant service..."
-sudo systemctl start voice-assistant.service
+sudo systemctl start snowman-voice-assistant.service
 
 # Verify service is running
-if ! systemctl is-active voice-assistant.service >/dev/null 2>&1; then
+if ! systemctl is-active snowman-voice-assistant.service >/dev/null 2>&1; then
     echo "⚠️ Warning: Service enabled but failed to start. Check status with:"
-    echo "sudo systemctl status voice-assistant.service"
+    echo "sudo systemctl status snowman-voice-assistant.service"
 fi
 
 echo "✅ Service file created, enabled, and started successfully"
@@ -321,13 +321,13 @@ echo "✅ Service file created, enabled, and started successfully"
 echo "✅ Installation complete!"
 echo ""
 echo "To start the service:"
-echo "sudo systemctl start voice-assistant.service"
+echo "sudo systemctl start snowman-voice-assistant.service"
 echo ""
 echo "To check status:"
-echo "sudo systemctl status voice-assistant.service"
+echo "sudo systemctl status snowman-voice-assistant.service"
 echo ""
 echo "To view logs:"
-echo "sudo journalctl -u voice-assistant.service -f"
+echo "sudo journalctl -u snowman-voice-assistant.service -f"
 echo ""
 echo "To list audio devices:"
 echo "1. List ALSA recording devices:"
@@ -389,7 +389,7 @@ echo ""
 echo "Your voice assistant has been installed on the Raspberry Pi."
 echo "You can manage it using these commands:"
 echo ""
-echo "Start: sudo systemctl start voice-assistant.service"
-echo "Stop:  sudo systemctl stop voice-assistant.service"
-echo "Status: sudo systemctl status voice-assistant.service"
-echo "Logs:  sudo journalctl -u voice-assistant.service -f"
+echo "Start: sudo systemctl start snowman-voice-assistant.service"
+echo "Stop:  sudo systemctl stop snowman-voice-assistant.service"
+echo "Status: sudo systemctl status snowman-voice-assistant.service"
+echo "Logs:  sudo journalctl -u snowman-voice-assistant.service -f"
