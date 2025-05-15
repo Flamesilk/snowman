@@ -58,6 +58,7 @@ Since the AI revolution began, I've been waiting for smart speakers to deliver t
 1. Ensure you have the following:
    - A Raspberry Pi (4 or newer recommended)
    - SSH access to your Raspberry Pi
+   - A USB sound card or compatible audio HAT/pHAT is recommended for audio recording (For example, [this one](https://www.amazon.com/dp/B09T33LJQM?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_1&th=1))
 
 2. Copy `.env.example` to `.env` file in the `local` directory, and edit it with your API keys.
 
