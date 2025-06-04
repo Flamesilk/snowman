@@ -49,3 +49,6 @@ temp_tts.wav
 # Local development
 .env.local
 .env.*.local
+
+others/
+docs/
