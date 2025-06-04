@@ -55,7 +55,7 @@ A lightweight, privacy-focused voice assistant that runs primarily locally on yo
    - A Raspberry Pi (4 or newer recommended)
    - SSH access to your Raspberry Pi
 
-2. Copy `.env.example` to `.env` file in the `local` directory, and edit it with your API keys.
+2. Copy `.env.example` to `.env.pi` file in the `local` directory, and edit it with your API keys.
 
 3. Run the installation script:
 ```bash

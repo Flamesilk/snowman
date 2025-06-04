@@ -9,7 +9,7 @@ PI_HOST=""
 PI_USER=""
 PI_PORT="22"
 PROJECT_DIR="~/voice-assistant"
-ENV_FILE="local/.env"
+ENV_FILE=".env.pi"
 
 # Print usage
 usage() {
@@ -79,11 +79,11 @@ done
 
 # Copy .env file if it exists
 if [ -f "$ENV_FILE" ]; then
-    echo "📝 Found .env file, copying it..."
+    echo "📝 Found .env.pi file, copying it as .env..."
     cp "$ENV_FILE" "$TEMP_DIR/.env"
     USING_LOCAL_ENV=true
 else
-    echo "⚠️ No .env file found at $ENV_FILE"
+    echo "⚠️ No .env.pi file found at $ENV_FILE"
     echo "You will be prompted to enter API keys during installation"
     USING_LOCAL_ENV=false
 fi
@@ -381,7 +381,7 @@ rm -rf "$TEMP_DIR"
 
 echo "✅ Installation completed successfully!"
 if [ "$USING_LOCAL_ENV" = true ]; then
-    echo "✨ Using API keys from local .env file"
+    echo "✨ Using API keys from .env.pi file"
 else
     echo "⚠️ Remember to enter your API keys when prompted"
 fi
