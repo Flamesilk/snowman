@@ -339,13 +339,13 @@ class SimpleLocalAssistant:
             self.audio_device_index = -1
 
         # Check for custom wake word file
-        custom_keyword_path = os.getenv("CUSTOM_KEYWORD_PATH")
-        if custom_keyword_path and os.path.exists(custom_keyword_path):
-            print(f"🔍 Using custom wake word from: {custom_keyword_path}")
+        CUSTOM_WAKE_KEYWORD_PATH = os.getenv("CUSTOM_WAKE_KEYWORD_PATH")
+        if CUSTOM_WAKE_KEYWORD_PATH and os.path.exists(CUSTOM_WAKE_KEYWORD_PATH):
+            print(f"🔍 Using custom wake word from: {CUSTOM_WAKE_KEYWORD_PATH}")
             try:
                 self.porcupine = pvporcupine.create(
                     access_key=access_key,
-                    keyword_paths=[custom_keyword_path]
+                    keyword_paths=[CUSTOM_WAKE_KEYWORD_PATH]
                 )
                 self.keywords = ["hey snowman"]  # For display purposes
                 print(f"✅ Porcupine initialized with custom wake word: {self.keywords[0]}")
