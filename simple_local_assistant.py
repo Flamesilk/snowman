@@ -452,7 +452,7 @@ class SimpleLocalAssistant:
 
             # Create the model with safety settings
             self.model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name="gemini-2.0-flash",
                 generation_config=self.generation_config,
                 safety_settings=safety_settings
             )
