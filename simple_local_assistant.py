@@ -58,9 +58,6 @@ USE_EDGE_TTS = True
 UTTERANCE_TIMEOUT = 30.0  # Maximum time to wait for a single utterance (in seconds)
 INACTIVITY_TIMEOUT = 30.0  # Time to wait for next user input before ending conversation (in seconds)
 
-# VAD settings
-VAD_THRESHOLD = 0.6  # Voice probability threshold for Cobra VAD
-
 # Sound effect paths
 SOUND_EFFECTS = {
     "wake": "sounds/wake_chime.wav",  # Shorter wake sound
@@ -181,14 +178,16 @@ class SimpleLocalAssistant:
                 print("❌ PICOVOICE_ACCESS_KEY is required in .env file for Cobra VAD")
                 sys.exit(1)
 
+            vad_threshold = float(os.getenv("VAD_THRESHOLD", "0.6"))
+
             # Create Cobra VAD instance
             self.cobra_vad = CobraVAD(
                 access_key=access_key,
-                threshold=VAD_THRESHOLD,
+                threshold=vad_threshold,
                 debug=DEBUG_AUDIO
             )
 
-            print(f"✅ Cobra VAD initialized with threshold: {VAD_THRESHOLD}")
+            print(f"✅ Cobra VAD initialized with threshold: {vad_threshold}")
         except Exception as e:
             print(f"❌ Error initializing Cobra VAD: {e}")
             sys.exit(1)

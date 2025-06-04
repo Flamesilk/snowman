@@ -64,13 +64,14 @@ echo "📦 Copying project files..."
 TEMP_DIR=$(mktemp -d)
 
 # Copy required files to temp directory
-cp local/simple_local_assistant.py "$TEMP_DIR/"
-cp local/requirements.txt "$TEMP_DIR/"
-cp local/cobra_vad.py "$TEMP_DIR/"  # Copy the Cobra VAD module
-cp -r local/sounds "$TEMP_DIR/sounds"  # Copy sounds directory
+cp simple_local_assistant.py "$TEMP_DIR/"
+cp requirements.txt "$TEMP_DIR/"
+cp cobra_vad.py "$TEMP_DIR/"  # Copy the Cobra VAD module
+cp prompts.py "$TEMP_DIR/"  # Copy the prompts module
+cp -r sounds "$TEMP_DIR/sounds"  # Copy sounds directory
 
 # Copy .ppn files if they exist
-for ppn_file in local/*.ppn; do
+for ppn_file in *raspberry-pi_*.ppn; do
     if [ -f "$ppn_file" ]; then
         echo "📝 Found wake word file: $ppn_file"
         cp "$ppn_file" "$TEMP_DIR/"
@@ -362,6 +363,7 @@ copy_to_pi "$TEMP_DIR/requirements.txt" "$PROJECT_DIR/"
 copy_to_pi "$TEMP_DIR/remote_install.sh" "$PROJECT_DIR/"
 copy_to_pi "$TEMP_DIR/sounds" "$PROJECT_DIR/"  # Copy sounds directory
 copy_to_pi "$TEMP_DIR/cobra_vad.py" "$PROJECT_DIR/"
+copy_to_pi "$TEMP_DIR/prompts.py" "$PROJECT_DIR/"
 # Copy any .ppn files that were found
 for ppn_file in "$TEMP_DIR"/*.ppn; do
     if [ -f "$ppn_file" ]; then

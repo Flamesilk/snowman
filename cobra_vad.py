@@ -35,7 +35,7 @@ class CobraVAD:
     using Picovoice Cobra, which is more accurate than simple volume thresholds.
     """
 
-    def __init__(self, access_key=None, threshold=DEFAULT_THRESHOLD, debug=False, device_index=None):
+    def __init__(self, access_key, threshold, debug=False, device_index=None):
         """
         Initialize the Cobra VAD
 
@@ -45,12 +45,6 @@ class CobraVAD:
             debug (bool): Whether to print debug information
             device_index (int, optional): Audio device index to use (can be loaded from env var AUDIO_DEVICE_INDEX)
         """
-        # Get access key from environment if not provided
-        if access_key is None:
-            access_key = os.getenv("PICOVOICE_ACCESS_KEY")
-            if not access_key:
-                raise ValueError("Picovoice access key is required. Set PICOVOICE_ACCESS_KEY environment variable or pass access_key parameter.")
-
         # List available audio devices
         devices = PvRecorder.get_available_devices()
         print("\n🎤 Available audio devices:")
