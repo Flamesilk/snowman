@@ -113,7 +113,8 @@ CHINESE_END_CONVERSATION_PHRASES = [
 ]
 LANGUAGE = "english"
 
-WHISPER_MODEL_SIZE = "tiny" #"small"
+# Get Whisper model size from environment variable, default to "tiny"
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL_SIZE", "tiny")  # Options: tiny, base, small, medium, large
 
 
 class SimpleLocalAssistant:
