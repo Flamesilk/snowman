@@ -64,7 +64,7 @@ If you encounter issues with Chinese language support:
 
 1. **Speech Recognition Issues**:
    - For better accuracy, try speaking clearly and in a quiet environment
-   - If you need better accuracy, you can upgrade to a larger Whisper model by changing the `model_size` parameter in the code
+   - If you need better accuracy, you can upgrade to a larger Whisper model by changing the `WHISPER_MODEL_SIZE` parameter in the code
 
 2. **Text-to-Speech Issues**: If the Chinese voice doesn't sound right, try changing to a different voice using the `.env` file.
 

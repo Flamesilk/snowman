@@ -19,7 +19,7 @@ import struct
 # Constants
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 512  # Default frame length for PvRecorder
-DEFAULT_THRESHOLD = 0.5  # Default voice probability threshold
+DEFAULT_THRESHOLD = 0.4  # Default voice probability threshold
 SILENCE_DURATION = 2.0  # Seconds of silence to consider speech ended
 BUFFER_PADDING = 0.5  # Seconds of audio to keep before speech starts
 

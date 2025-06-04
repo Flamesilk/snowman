@@ -113,6 +113,9 @@ CHINESE_END_CONVERSATION_PHRASES = [
 ]
 LANGUAGE = "english"
 
+WHISPER_MODEL_SIZE = "tiny" #"small"
+
+
 class SimpleLocalAssistant:
     def __init__(self, debug=False):
         """Initialize the voice assistant"""
@@ -245,17 +248,16 @@ class SimpleLocalAssistant:
         print("Loading Whisper ASR model...")
         try:
             # Use base model for faster loading and less memory usage
-            model_size = "small" #"tiny"
             device = "auto"
             compute_type = "int8"
 
-            print(f"Using faster-whisper {model_size} model on {device} with compute type {compute_type}")
+            print(f"Using faster-whisper {WHISPER_MODEL_SIZE} model on {device} with compute type {compute_type}")
 
             try:
                 # First try to load from local cache only
                 print("Attempting to load model from local cache...")
                 self.whisper_model = WhisperModel(
-                    model_size,
+                    WHISPER_MODEL_SIZE,
                     device=device,
                     compute_type=compute_type,
                     cpu_threads=2,  # Reduced for Raspberry Pi
@@ -264,10 +266,10 @@ class SimpleLocalAssistant:
                     local_files_only=True
                 )
             except Exception as cache_error:
-                print(f"Model not found in cache, downloading {model_size} model (this may take a while)...")
+                print(f"Model not found in cache, downloading {WHISPER_MODEL_SIZE} model (this may take a while)...")
                 # If local load fails, download the model
                 self.whisper_model = WhisperModel(
-                    model_size,
+                    WHISPER_MODEL_SIZE,
                     device=device,
                     compute_type=compute_type,
                     cpu_threads=2,  # Reduced for Raspberry Pi
@@ -276,7 +278,7 @@ class SimpleLocalAssistant:
                     local_files_only=False  # Allow downloading
                 )
 
-            print(f"✅ Whisper {model_size} model loaded on {device}")
+            print(f"✅ Whisper {WHISPER_MODEL_SIZE} model loaded on {device}")
         except Exception as e:
             print(f"❌ Error loading Whisper model: {e}")
             print("Speech recognition may not work properly.")
