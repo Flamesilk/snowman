@@ -1025,6 +1025,7 @@ class SimpleLocalAssistant:
                 self.tts_times.append(tts_time)
 
             self.play_sound_effect("start_listening", blocking=True)
+            time.sleep(0.2)
 
         finally:
             # Clear any audio that might have accumulated during speaking
