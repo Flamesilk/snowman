@@ -84,9 +84,9 @@ def main():
             effect_name = os.path.splitext(os.path.basename(input_path))[0]
             new_sound_effects[effect_name] = os.path.splitext(rel_path)[0] + '.wav'
 
-    # Create updated SOUND_EFFECTS mapping
-    print("\n📝 Updated SOUND_EFFECTS mapping:")
-    print("SOUND_EFFECTS = {")
+    # Create updated SOUND_EFFECTS_FILES mapping
+    print("\n📝 Updated SOUND_EFFECTS_FILES mapping:")
+    print("SOUND_EFFECTS_FILES = {")
     for effect_name, path in sorted(new_sound_effects.items()):
         print(f'    "{effect_name}": "{path}",')
     print("}")
@@ -100,7 +100,7 @@ def main():
     print("\n✨ Conversion complete!")
     print(f"Converted {len(new_sound_effects)} audio files to WAV format")
     print("\nYou can now:")
-    print("1. Update SOUND_EFFECTS in simple_local_assistant.py with the new mapping")
+    print("1. Update SOUND_EFFECTS_FILES in simple_local_assistant.py with the new mapping")
     print("2. Copy the WAV files to your Raspberry Pi")
     print("3. Delete the original audio files if no longer needed")
 

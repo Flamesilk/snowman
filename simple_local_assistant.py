@@ -58,8 +58,11 @@ USE_EDGE_TTS = True
 UTTERANCE_TIMEOUT = 30.0  # Maximum time to wait for a single utterance (in seconds)
 INACTIVITY_TIMEOUT = 30.0  # Time to wait for next user input before ending conversation (in seconds)
 
+# Audio volume setting (environment variable)
+AUDIO_VOLUME = int(os.getenv("AUDIO_VOLUME", "50"))
+
 # Sound effect paths
-SOUND_EFFECTS = {
+SOUND_EFFECTS_FILES = {
     "wake": "sounds/wake_chime.wav",  # Shorter wake sound
     "start_listening": "sounds/start_listening.wav",  # Sound played when starting to listen
     "start_transcribe": "sounds/start_transcribe.wav",  # Sound played before starting transcription
@@ -160,6 +163,9 @@ class SimpleLocalAssistant:
         self.llm_times = []
         self.tts_times = []
         self.search_times = []  # Reset search times for new session
+
+        # Set initial audio volume
+        self.set_audio_volume()
 
         # State variables
         self.is_listening = False
@@ -498,6 +504,39 @@ class SimpleLocalAssistant:
             print("Search functionality may be limited")
             self.tavily_client = None  # Ensure client is None if initialization fails
 
+    def set_audio_volume(self, volume_percent=None):
+        """
+        Set audio volume on Raspberry Pi using Master control
+        Args:
+            volume_percent: Volume percentage (0-100). If None, uses AUDIO_VOLUME from environment
+        """
+        if volume_percent is None:
+            volume_percent = AUDIO_VOLUME
+
+        # Clamp volume to valid range
+        volume_percent = max(0, min(100, volume_percent))
+
+        try:
+            if sys.platform.startswith('linux'):
+                # Use Master control on default card (confirmed working)
+                cmd = ["amixer", "sset", "Master", f"{volume_percent}%"]
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+
+                if result.returncode == 0:
+                    print(f"🔊 Volume set to {volume_percent}%")
+                    return True
+                else:
+                    print(f"⚠️ Failed to set volume: {result.stderr}")
+                    return False
+            else:
+                # Non-Linux systems - just log
+                print(f"📱 Volume control not implemented for {sys.platform}")
+                return False
+
+        except Exception as e:
+            print(f"⚠️ Error setting volume: {e}")
+            return False
+
     def play_sound_effect(self, effect_name, blocking=False):
         """
         Play a sound effect from the sounds directory
@@ -505,16 +544,19 @@ class SimpleLocalAssistant:
             effect_name: Name of the sound effect to play
             blocking: Whether to wait for the sound to finish playing
         """
-        if effect_name not in SOUND_EFFECTS:
+        if effect_name not in SOUND_EFFECTS_FILES:
             print(f"⚠️ Sound effect {effect_name} not found")
             return
 
-        sound_path = os.path.join(os.path.dirname(__file__), SOUND_EFFECTS[effect_name])
+        sound_path = os.path.join(os.path.dirname(__file__), SOUND_EFFECTS_FILES[effect_name])
         if not os.path.exists(sound_path):
             print(f"⚠️ Sound file not found: {sound_path}")
             return
 
         try:
+            # Set volume before playing sound effects
+            # self.set_audio_volume()
+
             # For Raspberry Pi/Linux
             if sys.platform.startswith('linux'):
                 try:
@@ -722,6 +764,9 @@ class SimpleLocalAssistant:
                 detected_lang = info.language
                 lang_prob = info.language_probability
                 # print(f"🔍 Detected language: {detected_lang} (probability: {lang_prob:.2f})")
+
+                # Initialize lang_symbol with a default value
+                lang_symbol = "🔤"  # Default symbol for unknown/low confidence languages
 
                 # Update assistant language based on detected language
                 if lang_prob > 0.5:  # Only update if confidence is high enough
@@ -971,7 +1016,7 @@ class SimpleLocalAssistant:
         """Convert text to speech and play it"""
         try:
             # Pause VAD monitoring while speaking
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+            if self.cobra_vad.is_monitoring:
                 self.cobra_vad.pause_monitoring()
 
             # Speak the text and get timing
@@ -979,14 +1024,15 @@ class SimpleLocalAssistant:
             if tts_time is not None:
                 self.tts_times.append(tts_time)
 
+            self.play_sound_effect("start_listening", blocking=True)
+
         finally:
             # Clear any audio that might have accumulated during speaking
-            if hasattr(self, 'cobra_vad'):
-                self.cobra_vad.clear_audio_buffer()
-                # Resume VAD monitoring after speaking
-                if self.cobra_vad.is_monitoring:
-                    self.cobra_vad.resume_monitoring()
-                    self.play_sound_effect("start_listening")
+            self.cobra_vad.clear_audio_buffer()
+            # Resume VAD monitoring after speaking
+            if self.cobra_vad.is_monitoring:
+                self.cobra_vad.resume_monitoring()
+
 
     def speak_text_edge(self, text):
         """Convert text to speech using Edge TTS and play it"""
@@ -1061,12 +1107,12 @@ class SimpleLocalAssistant:
                     # Use the configured audio device
                     alsa_device = f"hw:{self.audio_device_index},0" if self.audio_device_index >= 0 else "default"
 
-                    # Try to set maximum volume for the device
-                    try:
-                        subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    except Exception as e:
-                        print(f"⚠️ Could not set volume: {e}")
+                    # # Try to set maximum volume for the device
+                    # try:
+                    #     subprocess.run(["amixer", "-c", str(max(0, self.audio_device_index)), "sset", "PCM", "100%"],
+                    #                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    # except Exception as e:
+                    #     print(f"⚠️ Could not set volume: {e}")
 
                     # Try mpg123 with specific ALSA device first (since Edge TTS outputs MP3)
                     try:
@@ -1137,7 +1183,7 @@ class SimpleLocalAssistant:
         """Play a pre-recorded message based on type and current language"""
         try:
             # Pause VAD monitoring while playing message
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+            if self.cobra_vad.is_monitoring:
                 self.cobra_vad.pause_monitoring()
 
             if message_type in PRE_RECORDED_MESSAGES:
@@ -1148,7 +1194,7 @@ class SimpleLocalAssistant:
                 print(f"⚠️ No pre-recorded message found for: {message_type}")
         finally:
             # Resume VAD monitoring after message is fully played
-            if hasattr(self, 'cobra_vad') and self.cobra_vad.is_monitoring:
+            if self.cobra_vad.is_monitoring:
                 self.cobra_vad.resume_monitoring()
 
     def calculate_session_stats(self):
